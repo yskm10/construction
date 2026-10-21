@@ -28,8 +28,8 @@
 ## 公開手順
 
 1. GitHub の `Settings → Pages` で、Branch を `main` / `/ (root)` にして保存。
-2. 自社ドメインのサブドメイン(例 `kouji.○○.jp`)を使う場合は、DNS に **CNAME レコード**(名前 `kouji` → 値 `yskm10.github.io`)を追加し、リポジトリ直下に `CNAME` ファイル(中身はサブドメイン名だけ)を置く。Pages の設定で「Enforce HTTPS」を有効にする。
-3. 請負会社には `https://<サブドメイン>/` を、自社は `https://<サブドメイン>/admin.html` を使う。
+2. 公開URLは `sekou.medicom.co.jp`。DNS に **CNAME レコード**(ホスト名 `sekou` → 値 `yskm10.github.io`)を追加済みであること(営業担当が管理)。リポジトリ直下の `CNAME` ファイルにサブドメイン名を書いてある(消さないこと)。Pages の設定で「Enforce HTTPS」を有効にする。
+3. 請負会社には `https://sekou.medicom.co.jp/` を、自社は `https://sekou.medicom.co.jp/admin.html` を使う。
 
 ## 運用
 
