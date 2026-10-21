@@ -130,7 +130,7 @@
 
   // ---- 現場一覧 ----
   function statusChip(s) {
-    var cls = s === '完了' ? 'ok' : (s === '施工中' ? 'accent' : '');
+    var cls = s === '完工' ? 'ok' : 'accent';
     return '<span class="chip ' + cls + '">' + esc(s || '') + '</span>';
   }
   function viewList() {

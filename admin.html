@@ -21,7 +21,8 @@
   var sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
   var app = document.getElementById('app');
   var dlg = document.getElementById('dlg');
-  var STATUSES = ['準備中', '施工中', '完了', '請求済', '入金済'];
+  var STATUSES = ['施工前', '完工', '請求中', '完了'];
+  function statusCls(s) { return s === '完了' ? 'ok' : (s === '完工' ? 'accent' : (s === '請求中' ? 'warn' : '')); }
   var state = { projects: [], companies: [], tab: 'projects', filter: '' };
 
   function esc(s) {
@@ -168,7 +169,7 @@
     ps.forEach(function (p) {
       var pct = p.required ? Math.round(100 * p.done / p.required) : 0;
       html += '<article class="card" data-id="' + esc(p.id) + '">' +
-        '<div class="row between"><b style="font-size:17px">' + esc(p.name) + '</b><span class="chip ' + (p.status === '入金済' ? 'ok' : (p.status === '施工中' ? 'accent' : '')) + '">' + esc(p.status) + '</span></div>' +
+        '<div class="row between"><b style="font-size:17px">' + esc(p.name) + '</b><span class="chip ' + statusCls(p.status) + '">' + esc(p.status) + '</span></div>' +
         '<div class="small muted">' + esc(p.address || '') + (p.client_name ? ' / ' + esc(p.client_name) : '') + '</div>' +
         '<div class="small" style="margin-top:6px">請負会社: <b>' + esc(p.company_name || '未設定') + '</b></div>' +
         '<dl class="dl"><dt>請負金額</dt><dd class="money">' + yen(p.contract_amount) + '</dd>' +
@@ -202,7 +203,7 @@
     openDialog('<form id="pf" class="dlg" novalidate><h2>' + (id ? '案件を編集' : '案件を追加') + '</h2>' +
       '<label class="field"><span>現場名 *</span><input type="text" name="name" value="' + esc(p.name) + '" required></label>' +
       '<div class="grid2"><label class="field"><span>施主</span><input type="text" name="client_name" value="' + esc(p.client_name) + '"></label>' +
-      '<label class="field"><span>状態</span><select name="status">' + STATUSES.map(function (s) { return '<option' + ((p.status || '準備中') === s ? ' selected' : '') + '>' + esc(s) + '</option>'; }).join('') + '</select></label></div>' +
+      '<label class="field"><span>状態</span><select name="status">' + STATUSES.map(function (s) { return '<option' + ((p.status || '施工前') === s ? ' selected' : '') + '>' + esc(s) + '</option>'; }).join('') + '</select></label></div>' +
       '<label class="field"><span>住所</span><input type="text" name="address" value="' + esc(p.address) + '"></label>' +
       '<div class="grid2"><label class="field"><span>着工日</span><input type="date" name="start_date" value="' + esc(p.start_date) + '"></label>' +
       '<label class="field"><span>完工予定日</span><input type="date" name="end_date" value="' + esc(p.end_date) + '"></label></div>' +
