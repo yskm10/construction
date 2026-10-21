@@ -51,7 +51,7 @@
   // ---- 通信 ----
   function rpc(fn, args) {
     return fetch(API + '/rest/v1/rpc/' + fn, {
-      method: 'POST',
+      method: 'POST', cache: 'no-store',
       headers: { 'apikey': KEY, 'Authorization': 'Bearer ' + KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify(args)
     }).then(function (r) {
@@ -133,10 +133,13 @@
     var cls = s === '完工' ? 'ok' : 'accent';
     return '<span class="chip ' + cls + '">' + esc(s || '') + '</span>';
   }
+  var navSeq = 0; // 画面遷移の通し番号。遅れて届いた古い応答で画面を上書きしないため
   function viewList() {
+    var my = ++navSeq;
     app.innerHTML = header() + '<h1>担当の現場</h1><p class="sub">現場を選んで、写真を送ってください。</p><p><span class="spinner" aria-hidden="true"></span> 読み込み中…</p>';
     bindHeader();
     rpc('kj_my_projects', { p_token: token }).then(function (list) {
+      if (my !== navSeq) return;
       var html = header() + '<h1>担当の現場</h1><p class="sub">現場を選んで、写真を送ってください。</p>';
       if (!list || !list.length) {
         html += '<div class="card"><p>担当の現場はまだありません。<br>メディコムからの連絡をお待ちください。</p></div>';
@@ -158,11 +161,14 @@
   // ---- 現場詳細 ----
   var currentDetail = null;
   function viewDetail(id) {
+    var my = ++navSeq;
     app.innerHTML = header() + '<p><span class="spinner" aria-hidden="true"></span> 読み込み中…</p>';
     bindHeader();
     return rpc('kj_project_detail', { p_token: token, p_project_id: id }).then(function (d) {
+      if (my !== navSeq) return;
       currentDetail = d; renderDetail(d); loadThumbs(d);
     }).catch(function (e) {
+      if (my !== navSeq) return;
       if (isExpired(e)) { onError(e); return; }
       app.innerHTML = header() + '<div class="notice bad">この現場は表示できません。</div><a class="btn block" href="#/">現場一覧へ戻る</a>';
       bindHeader();
@@ -316,6 +322,11 @@
     if (m) viewDetail(m[1]); else viewList();
   }
   window.addEventListener('hashchange', function () { if (!busy) route(); });
+  // 戻る操作・タブ復帰・画面を開き直したときも、一覧は必ず最新に取り直す
+  window.addEventListener('pageshow', function (e) { if (e.persisted && !busy && token) route(); });
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible' && !busy && token && !/^#\/p\//.test(location.hash)) viewList();
+  });
   window.addEventListener('beforeunload', function (e) { if (busy) { e.preventDefault(); e.returnValue = ''; } });
   route();
 })();
