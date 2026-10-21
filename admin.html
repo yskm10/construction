@@ -51,7 +51,37 @@
     if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text).then(done, function () { toast('コピーできませんでした。手で選択してください', true); }); }
     else { toast('この端末ではコピーできません。手で選択してください', true); }
   }
-  function appBase() { return new URL('./', location.href).href; }
+
+  // ---- 入力の補助: 金額は 3,000,000 のようにカンマ区切り、IDは半角英数字に固定 ----
+  function fmtMoney(el) {
+    var raw = el.value.normalize('NFKC'), pos = el.selectionStart == null ? raw.length : el.selectionStart;
+    var before = raw.slice(0, pos).replace(/[^0-9]/g, '').length;
+    var out = raw.replace(/[^0-9]/g, '').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    if (out === el.value) return;
+    el.value = out;
+    var p = 0, c = 0;
+    while (p < out.length && c < before) { if (/[0-9]/.test(out.charAt(p))) c++; p++; }
+    try { el.setSelectionRange(p, p); } catch (e) {}
+  }
+  function fixAscii(el) { // 全角→半角、大文字→小文字、使えない文字は取り除く
+    var v = el.value.normalize('NFKC').toLowerCase().replace(/[^a-z0-9._-]/g, '');
+    if (v !== el.value) el.value = v;
+  }
+  function bindInputs(root) {
+    Array.prototype.forEach.call(root.querySelectorAll('[data-money]'), function (el) {
+      var run = function () { fmtMoney(el); };
+      el.addEventListener('input', function (e) { if (!e.isComposing) run(); });
+      el.addEventListener('compositionend', run);
+      run();
+    });
+    Array.prototype.forEach.call(root.querySelectorAll('[data-ascii]'), function (el) {
+      var run = function () { fixAscii(el); };
+      el.addEventListener('input', function (e) { if (!e.isComposing) run(); });
+      el.addEventListener('compositionend', run);
+      run();
+    });
+  }
+  function appBase() { return CONFIG.PUBLIC_URL || new URL('./', location.href).href; }
 
   // ---- ログイン(POSと同じSupabaseのアカウント。店主のみ) ----
   function viewLogin(msg) {
@@ -162,7 +192,7 @@
     });
   }
 
-  function openDialog(html) { dlg.innerHTML = html; if (!dlg.open) dlg.showModal(); }
+  function openDialog(html) { dlg.innerHTML = html; bindInputs(dlg); if (!dlg.open) dlg.showModal(); }
   function closeDialog() { if (dlg.open) dlg.close(); }
 
   function editProject(id) {
@@ -178,8 +208,8 @@
       '<label class="field"><span>完工予定日</span><input type="date" name="end_date" value="' + esc(p.end_date) + '"></label></div>' +
       '<label class="field"><span>請負会社(写真を送る会社)</span><select name="company_id"><option value="">未設定</option>' +
       companies.map(function (c) { return '<option value="' + esc(c.id) + '"' + (p.company_id === c.id ? ' selected' : '') + '>' + esc(c.name) + (c.active ? '' : '(無効)') + '</option>'; }).join('') + '</select></label>' +
-      '<div class="grid2"><label class="field"><span>請負金額(見積)</span><input type="text" inputmode="numeric" name="contract_amount" value="' + esc(p.contract_amount == null ? '' : p.contract_amount) + '" placeholder="例 500000"></label>' +
-      '<label class="field"><span>工事代金(客先請求分)</span><input type="text" inputmode="numeric" name="billing_amount" value="' + esc(p.billing_amount == null ? '' : p.billing_amount) + '" placeholder="例 900000"></label></div>' +
+      '<div class="grid2"><label class="field"><span>請負金額(見積)</span><input type="text" inputmode="numeric" data-money autocomplete="off" name="contract_amount" value="' + esc(p.contract_amount == null ? '' : p.contract_amount) + '" placeholder="例 500000"></label>' +
+      '<label class="field"><span>工事代金(客先請求分)</span><input type="text" inputmode="numeric" data-money autocomplete="off" name="billing_amount" value="' + esc(p.billing_amount == null ? '' : p.billing_amount) + '" placeholder="例 900000"></label></div>' +
       '<div class="grid2"><label class="field"><span>入金日</span><input type="date" name="payment_in_date" value="' + esc(p.payment_in_date) + '"></label>' +
       '<label class="field"><span>支払日</span><input type="date" name="payment_out_date" value="' + esc(p.payment_out_date) + '"></label></div>' +
       '<p class="small muted">金額・入金日・支払日は、請負会社には表示されません。</p>' +
@@ -274,7 +304,7 @@
   function newCompany() {
     openDialog('<form id="cf" class="dlg" novalidate><h2>会社を追加</h2>' +
       '<label class="field"><span>会社名 *</span><input type="text" name="name" required></label>' +
-      '<label class="field"><span>ログインID *(英数字・3文字以上。例: abc-denki)</span><input type="text" name="login_id" autocapitalize="none" spellcheck="false" required></label>' +
+      '<label class="field"><span>ログインID *(英数字・3文字以上。例: abc-denki)</span><input type="text" name="login_id" data-ascii lang="en" inputmode="email" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" style="ime-mode:disabled" required></label>' +
       '<p class="small muted">パスワードは、自動で推測されにくいものを作ります。</p>' +
       '<div class="actions"><button class="btn ghost" type="button" id="c">キャンセル</button><button class="btn primary" type="submit" id="s">発行する</button></div></form>');
     document.getElementById('c').addEventListener('click', closeDialog);

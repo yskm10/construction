@@ -102,15 +102,15 @@
       '<h1>ログイン</h1><p class="sub">メディコムからお知らせしたIDとパスワードを入力してください。</p>' +
       (msg ? '<div class="notice bad" role="alert">' + esc(msg) + '</div>' : '') +
       '<form id="f" autocomplete="on" novalidate>' +
-      '<label class="field"><span>ID</span><input id="lid" name="username" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required></label>' +
+      '<label class="field"><span>ID</span><input id="lid" name="username" type="text" lang="en" inputmode="email" style="ime-mode:disabled" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required></label>' +
       '<label class="field"><span>パスワード</span><input id="pw" name="password" type="password" autocomplete="current-password" required></label>' +
       '<button class="btn primary block" id="go" type="submit">ログイン</button>' +
       '</form></div>';
     var f = document.getElementById('f');
     f.addEventListener('submit', function (ev) {
       ev.preventDefault();
-      var id = document.getElementById('lid').value.trim();
-      var pw = document.getElementById('pw').value;
+      var id = document.getElementById('lid').value.normalize('NFKC').replace(/\s/g, '');
+      var pw = document.getElementById('pw').value.normalize('NFKC');
       if (!id || !pw) { viewLogin('IDとパスワードを入力してください'); return; }
       var go = document.getElementById('go'); go.disabled = true; go.textContent = '確認中…';
       rpc('kj_login', { p_login_id: id, p_password: pw }).then(function (r) {
