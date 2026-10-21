@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#14213d">
+<title>施工管理 管理画面 | 株式会社メディコム</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main id="app" class="wrap wide" aria-live="polite"></main>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<dialog id="dlg"></dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script>
+(function () {
+  'use strict';
+  var sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
+  var app = document.getElementById('app');
+  var dlg = document.getElementById('dlg');
+  var STATUSES = ['準備中', '施工中', '完了', '請求済', '入金済'];
+  var state = { projects: [], companies: [], tab: 'projects', filter: '' };
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  var toastTimer;
+  function toast(msg, bad) {
+    var t = document.getElementById('toast');
+    t.textContent = msg; t.className = 'toast show' + (bad ? ' bad' : '');
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.className = 'toast'; }, 3500);
+  }
+  function yen(n) { return (n == null || n === '') ? '—' : '¥' + Number(n).toLocaleString('ja-JP'); }
+  function num(v) { // 「¥1,234」「1,234」などを数値に。空なら空文字(=未入力)
+    var s = String(v == null ? '' : v).replace(/[¥,\s円]/g, '');
+    return s === '' || isNaN(Number(s)) ? '' : s;
+  }
+  function dt(d) { return d ? String(d).replace(/-/g, '/') : '—'; }
+  function genPassword() { // 紛らわしい文字(0/O/1/l/I)を除いた12文字
+    var chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    var a = new Uint32Array(12); crypto.getRandomValues(a);
+    return Array.prototype.map.call(a, function (x) { return chars[x % chars.length]; }).join('');
+  }
+  function copy(text, msg) {
+    var done = function () { toast(msg || 'コピーしました'); };
+    if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text).then(done, function () { toast('コピーできませんでした。手で選択してください', true); }); }
+    else { toast('この端末ではコピーできません。手で選択してください', true); }
+  }
+  function appBase() { return new URL('./', location.href).href; }
+
+  // ---- ログイン(POSと同じSupabaseのアカウント。店主のみ) ----
+  function viewLogin(msg) {
+    app.innerHTML =
+      '<div class="top"><div class="brand">施工管理 管理画面<small>株式会社メディコム</small></div></div>' +
+      '<div class="card" style="max-width:440px;margin:0 auto"><h1>ログイン</h1>' +
+      '<p class="sub">店主のアカウント(POSと同じメールアドレス・パスワード)でログインします。</p>' +
+      (msg ? '<div class="notice bad" role="alert">' + esc(msg) + '</div>' : '') +
+      '<form id="f" novalidate>' +
+      '<label class="field"><span>メールアドレス</span><input id="em" type="email" autocomplete="username" required></label>' +
+      '<label class="field"><span>パスワード</span><input id="pw" type="password" autocomplete="current-password" required></label>' +
+      '<button class="btn primary block" id="go" type="submit">ログイン</button></form></div>';
+    document.getElementById('f').addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var em = document.getElementById('em').value.trim(), pw = document.getElementById('pw').value;
+      if (!em || !pw) { viewLogin('メールアドレスとパスワードを入力してください'); return; }
+      var go = document.getElementById('go'); go.disabled = true; go.textContent = '確認中…';
+      sb.auth.signInWithPassword({ email: em, password: pw }).then(function (r) {
+        if (r.error) { viewLogin('メールアドレスまたはパスワードが違います'); return; }
+        boot();
+      });
+    });
+  }
+
+  // ---- 読み込み ----
+  function loadAll() {
+    return Promise.all([sb.rpc('kj_admin_projects'), sb.rpc('kj_admin_companies')]).then(function (rs) {
+      var bad = rs[0].error || rs[1].error;
+      if (bad) { var e = new Error(bad.message); e.code = bad.code; throw e; }
+      state.projects = rs[0].data || []; state.companies = rs[1].data || [];
+    });
+  }
+  function boot() {
+    sb.auth.getSession().then(function (r) {
+      if (!r.data.session) { viewLogin(); return; }
+      app.innerHTML = '<p><span class="spinner" aria-hidden="true"></span> 読み込み中…</p>';
+      loadAll().then(render).catch(function (e) {
+        if (e.code === '42501') {
+          sb.auth.signOut().then(function () { viewLogin('このアカウントには権限がありません。店主のアカウントでログインしてください。'); });
+        } else {
+          app.innerHTML = '<div class="notice bad">読み込めませんでした。</div><button class="btn" id="r" type="button">もう一度読み込む</button>';
+          document.getElementById('r').addEventListener('click', boot);
+        }
+      });
+    });
+  }
+
+  // ---- 画面全体 ----
+  function render() {
+    app.innerHTML =
+      '<div class="top"><div class="brand">施工管理 管理画面<small>株式会社メディコム</small></div>' +
+      '<div class="who"><button class="btn ghost small" id="out" type="button">ログアウト</button></div></div>' +
+      '<div class="tabs" role="tablist">' +
+      '<button class="tab" role="tab" id="t-projects" aria-selected="' + (state.tab === 'projects') + '" data-tab="projects">案件</button>' +
+      '<button class="tab" role="tab" id="t-companies" aria-selected="' + (state.tab === 'companies') + '" data-tab="companies">請負会社のアカウント</button></div>' +
+      '<div id="body"></div>';
+    document.getElementById('out').addEventListener('click', function () { sb.auth.signOut().then(function () { viewLogin(); }); });
+    Array.prototype.forEach.call(app.querySelectorAll('.tab'), function (t) {
+      t.addEventListener('click', function () { state.tab = t.getAttribute('data-tab'); render(); });
+    });
+    if (state.tab === 'projects') renderProjects(); else renderCompanies();
+  }
+
+  // ---- 案件 ----
+  function renderProjects() {
+    var ps = state.projects.filter(function (p) { return !state.filter || p.status === state.filter; });
+    var sumC = 0, sumB = 0, waiting = 0;
+    state.projects.forEach(function (p) {
+      sumC += Number(p.contract_amount || 0); sumB += Number(p.billing_amount || 0);
+      if (p.billing_amount && !p.payment_in_date) waiting++;
+    });
+    var html =
+      '<div class="kpis">' +
+      '<div class="kpi"><span>案件数</span><b>' + state.projects.length + '件</b></div>' +
+      '<div class="kpi"><span>請負金額 合計</span><b class="money">' + yen(sumC) + '</b></div>' +
+      '<div class="kpi"><span>工事代金(客先請求)合計</span><b class="money">' + yen(sumB) + '</b></div>' +
+      '<div class="kpi"><span>差額(請求 − 請負)</span><b class="money">' + yen(sumB - sumC) + '</b></div>' +
+      '<div class="kpi"><span>入金待ち</span><b>' + waiting + '件</b></div></div>' +
+      '<div class="row between" style="margin-bottom:12px"><label class="field" style="margin:0;min-width:180px"><span class="small muted">状態で絞り込む</span>' +
+      '<select id="flt"><option value="">すべて</option>' + STATUSES.map(function (s) { return '<option' + (state.filter === s ? ' selected' : '') + '>' + esc(s) + '</option>'; }).join('') + '</select></label>' +
+      '<button class="btn primary" id="newp" type="button">＋ 案件を追加</button></div>';
+    if (!ps.length) html += '<div class="card"><p>該当する案件はありません。</p></div>';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px">';
+    ps.forEach(function (p) {
+      var pct = p.required ? Math.round(100 * p.done / p.required) : 0;
+      html += '<article class="card" data-id="' + esc(p.id) + '">' +
+        '<div class="row between"><b style="font-size:17px">' + esc(p.name) + '</b><span class="chip ' + (p.status === '入金済' ? 'ok' : (p.status === '施工中' ? 'accent' : '')) + '">' + esc(p.status) + '</span></div>' +
+        '<div class="small muted">' + esc(p.address || '') + (p.client_name ? ' / ' + esc(p.client_name) : '') + '</div>' +
+        '<div class="small" style="margin-top:6px">請負会社: <b>' + esc(p.company_name || '未設定') + '</b></div>' +
+        '<dl class="dl"><dt>請負金額</dt><dd class="money">' + yen(p.contract_amount) + '</dd>' +
+        '<dt>工事代金(請求)</dt><dd class="money">' + yen(p.billing_amount) + '</dd>' +
+        '<dt>入金日</dt><dd>' + (p.payment_in_date ? dt(p.payment_in_date) : (p.billing_amount ? '<span class="chip warn">入金待ち</span>' : '—')) + '</dd>' +
+        '<dt>支払日</dt><dd>' + dt(p.payment_out_date) + '</dd>' +
+        '<dt>工期</dt><dd>' + dt(p.start_date) + ' 〜 ' + dt(p.end_date) + '</dd></dl>' +
+        '<div class="bar' + (p.done >= p.required ? ' done' : '') + '"><i style="width:' + pct + '%"></i></div>' +
+        '<div class="small muted" style="margin:4px 0 10px">写真 ' + p.done + ' / ' + p.required + ' 項目</div>' +
+        '<div class="row"><button class="btn small" data-act="photos" type="button">写真を見る</button><button class="btn small" data-act="edit" type="button">編集</button></div>' +
+        '</article>';
+    });
+    html += '</div>';
+    document.getElementById('body').innerHTML = html;
+    document.getElementById('flt').addEventListener('change', function (e) { state.filter = e.target.value; renderProjects(); });
+    document.getElementById('newp').addEventListener('click', function () { editProject(null); });
+    Array.prototype.forEach.call(app.querySelectorAll('article[data-id]'), function (a) {
+      var id = a.getAttribute('data-id');
+      a.querySelector('[data-act=edit]').addEventListener('click', function () { editProject(id); });
+      a.querySelector('[data-act=photos]').addEventListener('click', function () { showPhotos(id); });
+    });
+  }
+
+  function openDialog(html) { dlg.innerHTML = html; if (!dlg.open) dlg.showModal(); }
+  function closeDialog() { if (dlg.open) dlg.close(); }
+
+  function editProject(id) {
+    var p = id ? state.projects.filter(function (x) { return x.id === id; })[0] : {};
+    p = p || {};
+    var companies = state.companies.filter(function (c) { return c.active || c.id === p.company_id; });
+    openDialog('<form id="pf" class="dlg" novalidate><h2>' + (id ? '案件を編集' : '案件を追加') + '</h2>' +
+      '<label class="field"><span>現場名 *</span><input type="text" name="name" value="' + esc(p.name) + '" required></label>' +
+      '<div class="grid2"><label class="field"><span>施主</span><input type="text" name="client_name" value="' + esc(p.client_name) + '"></label>' +
+      '<label class="field"><span>状態</span><select name="status">' + STATUSES.map(function (s) { return '<option' + ((p.status || '準備中') === s ? ' selected' : '') + '>' + esc(s) + '</option>'; }).join('') + '</select></label></div>' +
+      '<label class="field"><span>住所</span><input type="text" name="address" value="' + esc(p.address) + '"></label>' +
+      '<div class="grid2"><label class="field"><span>着工日</span><input type="date" name="start_date" value="' + esc(p.start_date) + '"></label>' +
+      '<label class="field"><span>完工予定日</span><input type="date" name="end_date" value="' + esc(p.end_date) + '"></label></div>' +
+      '<label class="field"><span>請負会社(写真を送る会社)</span><select name="company_id"><option value="">未設定</option>' +
+      companies.map(function (c) { return '<option value="' + esc(c.id) + '"' + (p.company_id === c.id ? ' selected' : '') + '>' + esc(c.name) + (c.active ? '' : '(無効)') + '</option>'; }).join('') + '</select></label>' +
+      '<div class="grid2"><label class="field"><span>請負金額(見積)</span><input type="text" inputmode="numeric" name="contract_amount" value="' + esc(p.contract_amount == null ? '' : p.contract_amount) + '" placeholder="例 500000"></label>' +
+      '<label class="field"><span>工事代金(客先請求分)</span><input type="text" inputmode="numeric" name="billing_amount" value="' + esc(p.billing_amount == null ? '' : p.billing_amount) + '" placeholder="例 900000"></label></div>' +
+      '<div class="grid2"><label class="field"><span>入金日</span><input type="date" name="payment_in_date" value="' + esc(p.payment_in_date) + '"></label>' +
+      '<label class="field"><span>支払日</span><input type="date" name="payment_out_date" value="' + esc(p.payment_out_date) + '"></label></div>' +
+      '<p class="small muted">金額・入金日・支払日は、請負会社には表示されません。</p>' +
+      '<div class="actions"><button class="btn ghost" type="button" id="c">キャンセル</button><button class="btn primary" type="submit" id="s">保存する</button></div></form>');
+    document.getElementById('c').addEventListener('click', closeDialog);
+    document.getElementById('pf').addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var f = ev.target, g = function (n) { return f.elements[n].value.trim(); };
+      if (!g('name')) { toast('現場名を入力してください', true); return; }
+      var obj = {
+        id: id || '', name: g('name'), client_name: g('client_name'), address: g('address'), status: g('status'),
+        start_date: g('start_date'), end_date: g('end_date'), company_id: g('company_id'),
+        contract_amount: num(g('contract_amount')), billing_amount: num(g('billing_amount')),
+        payment_in_date: g('payment_in_date'), payment_out_date: g('payment_out_date')
+      };
+      if (g('contract_amount') && obj.contract_amount === '') { toast('請負金額は数字で入力してください', true); return; }
+      if (g('billing_amount') && obj.billing_amount === '') { toast('工事代金は数字で入力してください', true); return; }
+      var s = document.getElementById('s'); s.disabled = true; s.textContent = '保存中…';
+      sb.rpc('kj_admin_save_project', { p: obj }).then(function (r) {
+        if (r.error) { s.disabled = false; s.textContent = '保存する'; toast('保存できませんでした', true); return; }
+        closeDialog(); toast('保存しました');
+        loadAll().then(render);
+      });
+    });
+  }
+
+  function showPhotos(id) {
+    var p = state.projects.filter(function (x) { return x.id === id; })[0];
+    openDialog('<div class="dlg"><h2>' + esc(p.name) + ' の写真</h2><p><span class="spinner" aria-hidden="true"></span> 読み込み中…</p></div>');
+    sb.rpc('kj_admin_project_photos', { p_project_id: id }).then(function (r) {
+      if (r.error) { openDialog('<div class="dlg"><div class="notice bad">写真を読み込めませんでした。</div><div class="actions"><button class="btn" id="c" type="button">閉じる</button></div></div>'); document.getElementById('c').addEventListener('click', closeDialog); return; }
+      var reqs = r.data.requirements || [], photos = r.data.photos || [];
+      var paths = photos.map(function (x) { return x.path; });
+      var sign = paths.length ? sb.storage.from('kouji-photos').createSignedUrls(paths, 600) : Promise.resolve({ data: [] });
+      sign.then(function (s) {
+        var urls = {}; (s.data || []).forEach(function (x) { if (x.signedUrl) urls[x.path] = x.signedUrl; });
+        var html = '<div class="dlg"><h2>' + esc(p.name) + ' の写真</h2><p class="small muted">リンクは10分間だけ有効です。' + (p.company_name ? '請負会社: ' + esc(p.company_name) : '') + '</p>';
+        var missing = [];
+        reqs.forEach(function (rq) {
+          var mine = photos.filter(function (x) { return x.requirement_id === rq.id; });
+          if (!mine.length) missing.push(rq.label);
+          html += '<section class="req' + (mine.length ? ' done' : '') + '"><div class="head"><span class="mark" aria-hidden="true">' + (mine.length ? '✓' : rq.sort) + '</span><span class="label">' + esc(rq.label) + '</span><span class="chip ' + (mine.length ? 'ok' : 'bad') + '">' + (mine.length ? mine.length + '枚' : '未撮影') + '</span></div>' +
+            (mine.length ? '<div class="thumbs">' + mine.map(function (x) {
+              var u = urls[x.path];
+              return u ? '<a class="thumb" href="' + esc(u) + '" target="_blank" rel="noopener" title="' + esc(new Date(x.created_at).toLocaleString('ja-JP')) + '"><img alt="' + esc(rq.label) + '" loading="lazy" src="' + esc(u) + '"></a>' : '';
+            }).join('') + '</div>' : '') + '</section>';
+        });
+        html += (missing.length ? '<div class="notice warn" style="margin-top:12px">未撮影: ' + missing.map(esc).join('、') + '</div>' : '<div class="notice ok" style="margin-top:12px">すべての写真がそろっています。</div>') +
+          '<div class="actions"><button class="btn" id="c" type="button">閉じる</button></div></div>';
+        openDialog(html); document.getElementById('c').addEventListener('click', closeDialog);
+      });
+    });
+  }
+
+  // ---- 請負会社のアカウント ----
+  function renderCompanies() {
+    var html = '<div class="row between" style="margin-bottom:12px"><p class="sub" style="margin:0">請負会社ごとにIDとパスワードを発行します。会社は自分の現場の写真だけを見て、送れます。</p>' +
+      '<button class="btn primary" id="newc" type="button">＋ 会社を追加</button></div>';
+    if (!state.companies.length) html += '<div class="card"><p>まだ会社が登録されていません。</p></div>';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px">';
+    state.companies.forEach(function (c) {
+      var locked = c.locked_until && new Date(c.locked_until) > new Date();
+      var n = state.projects.filter(function (p) { return p.company_id === c.id; }).length;
+      html += '<article class="card" data-id="' + esc(c.id) + '"><div class="row between"><b style="font-size:17px">' + esc(c.name) + '</b>' +
+        '<span class="chip ' + (c.active ? 'ok' : 'bad') + '">' + (c.active ? '有効' : '無効') + '</span></div>' +
+        '<dl class="dl"><dt>ID</dt><dd>' + esc(c.login_id) + '</dd><dt>担当の現場</dt><dd>' + n + '件</dd>' +
+        (locked ? '<dt>状態</dt><dd><span class="chip warn">ロック中</span></dd>' : '') + '</dl>' +
+        '<div class="row"><button class="btn small" data-act="reset" type="button">パスワード再発行</button>' +
+        '<button class="btn small ' + (c.active ? 'danger' : '') + '" data-act="toggle" type="button">' + (c.active ? '無効にする' : '有効に戻す') + '</button></div></article>';
+    });
+    html += '</div>';
+    document.getElementById('body').innerHTML = html;
+    document.getElementById('newc').addEventListener('click', newCompany);
+    Array.prototype.forEach.call(app.querySelectorAll('article[data-id]'), function (a) {
+      var id = a.getAttribute('data-id');
+      a.querySelector('[data-act=reset]').addEventListener('click', function () { resetPassword(id); });
+      a.querySelector('[data-act=toggle]').addEventListener('click', function () { toggleCompany(id); });
+    });
+  }
+  function credentials(name, loginId, pw, title) {
+    var url = appBase();
+    var text = '【施工管理 ログイン情報】\n' + name + ' 様\nURL: ' + url + '\nID: ' + loginId + '\nパスワード: ' + pw + '\n※パスワードは他の方に教えないでください。';
+    openDialog('<div class="dlg stack"><h2>' + esc(title) + '</h2>' +
+      '<div class="notice warn">この画面を閉じると、パスワードは二度と表示できません。必ずコピーして、先方にお伝えください。</div>' +
+      '<div><div class="small muted">ID</div><div class="secret">' + esc(loginId) + '</div></div>' +
+      '<div><div class="small muted">パスワード</div><div class="secret">' + esc(pw) + '</div></div>' +
+      '<div><div class="small muted">先方へ送る案内文</div><textarea id="msg" rows="6" readonly style="font-size:14px">' + esc(text) + '</textarea></div>' +
+      '<div class="actions"><button class="btn" id="cp" type="button">案内文をコピー</button><button class="btn primary" id="c" type="button">閉じる</button></div></div>');
+    document.getElementById('cp').addEventListener('click', function () { copy(text, '案内文をコピーしました'); });
+    document.getElementById('c').addEventListener('click', closeDialog);
+  }
+  function newCompany() {
+    openDialog('<form id="cf" class="dlg" novalidate><h2>会社を追加</h2>' +
+      '<label class="field"><span>会社名 *</span><input type="text" name="name" required></label>' +
+      '<label class="field"><span>ログインID *(英数字・3文字以上。例: abc-denki)</span><input type="text" name="login_id" autocapitalize="none" spellcheck="false" required></label>' +
+      '<p class="small muted">パスワードは、自動で推測されにくいものを作ります。</p>' +
+      '<div class="actions"><button class="btn ghost" type="button" id="c">キャンセル</button><button class="btn primary" type="submit" id="s">発行する</button></div></form>');
+    document.getElementById('c').addEventListener('click', closeDialog);
+    document.getElementById('cf').addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var f = ev.target, name = f.elements.name.value.trim(), lid = f.elements.login_id.value.trim().toLowerCase();
+      if (!name) { toast('会社名を入力してください', true); return; }
+      if (!/^[a-z0-9._-]{3,}$/.test(lid)) { toast('IDは英数字(. _ - 可)3文字以上にしてください', true); return; }
+      var pw = genPassword(), s = document.getElementById('s'); s.disabled = true; s.textContent = '発行中…';
+      sb.rpc('kj_admin_create_company', { p_name: name, p_login_id: lid, p_password: pw }).then(function (r) {
+        if (r.error) {
+          s.disabled = false; s.textContent = '発行する';
+          toast(r.error.code === '23505' ? 'そのIDはすでに使われています' : '発行できませんでした', true); return;
+        }
+        loadAll().then(function () { render(); credentials(name, lid, pw, 'アカウントを発行しました'); });
+      });
+    });
+  }
+  function resetPassword(id) {
+    var c = state.companies.filter(function (x) { return x.id === id; })[0];
+    openDialog('<div class="dlg"><h2>パスワードを再発行</h2><p>' + esc(c.name) + ' のパスワードを新しくします。今のパスワードは使えなくなり、ログイン中の端末もログアウトされます。</p>' +
+      '<div class="actions"><button class="btn ghost" id="c" type="button">キャンセル</button><button class="btn primary" id="ok" type="button">再発行する</button></div></div>');
+    document.getElementById('c').addEventListener('click', closeDialog);
+    document.getElementById('ok').addEventListener('click', function () {
+      var pw = genPassword(); this.disabled = true;
+      sb.rpc('kj_admin_reset_password', { p_company: id, p_password: pw }).then(function (r) {
+        if (r.error) { closeDialog(); toast('再発行できませんでした', true); return; }
+        loadAll().then(function () { render(); credentials(c.name, c.login_id, pw, 'パスワードを再発行しました'); });
+      });
+    });
+  }
+  function toggleCompany(id) {
+    var c = state.companies.filter(function (x) { return x.id === id; })[0], to = !c.active;
+    openDialog('<div class="dlg"><h2>' + (to ? '有効に戻す' : '無効にする') + '</h2><p>' + esc(c.name) + (to ? ' を有効に戻します。' : ' を無効にします。ログイン中の端末もすぐに使えなくなります。') + '</p>' +
+      '<div class="actions"><button class="btn ghost" id="c" type="button">キャンセル</button><button class="btn ' + (to ? 'primary' : 'danger') + '" id="ok" type="button">' + (to ? '有効に戻す' : '無効にする') + '</button></div></div>');
+    document.getElementById('c').addEventListener('click', closeDialog);
+    document.getElementById('ok').addEventListener('click', function () {
+      this.disabled = true;
+      sb.rpc('kj_admin_set_active', { p_company: id, p_active: to }).then(function (r) {
+        closeDialog();
+        if (r.error) { toast('変更できませんでした', true); return; }
+        toast(to ? '有効に戻しました' : '無効にしました');
+        loadAll().then(render);
+      });
+    });
+  }
+
+  dlg.addEventListener('click', function (e) { if (e.target === dlg) closeDialog(); });
+  boot();
+})();
+</script>
+</body>
+</html>

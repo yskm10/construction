@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#14213d">
+<title>施工管理 | 株式会社メディコム</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main id="app" class="wrap" aria-live="polite"></main>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script src="config.js"></script>
+<script>
+(function () {
+  'use strict';
+  var API = CONFIG.SUPABASE_URL, KEY = CONFIG.SUPABASE_KEY;
+  var app = document.getElementById('app');
+
+  // ---- 端末への保存(使えない環境でも動くようにする) ----
+  var store = {
+    get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+    del: function (k) { try { localStorage.removeItem(k); } catch (e) {} }
+  };
+  var token = store.get('kj_token');
+  var companyName = store.get('kj_company') || '';
+  var busy = false; // 写真送信中
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  var toastTimer;
+  function toast(msg, bad) {
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'toast show' + (bad ? ' bad' : '');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.className = 'toast'; }, 3500);
+  }
+  function fmtDate(d) {
+    if (!d) return '';
+    var p = String(d).split('-');
+    return p.length === 3 ? (Number(p[1]) + '/' + Number(p[2])) : d;
+  }
+
+  // ---- 通信 ----
+  function rpc(fn, args) {
+    return fetch(API + '/rest/v1/rpc/' + fn, {
+      method: 'POST',
+      headers: { 'apikey': KEY, 'Authorization': 'Bearer ' + KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify(args)
+    }).then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (data) {
+        if (!r.ok) {
+          var e = new Error((data && data.message) || 'error');
+          e.code = data && data.code; e.status = r.status;
+          throw e;
+        }
+        return data;
+      });
+    });
+  }
+  function isExpired(e) { return e && (e.code === '28000' || e.message === 'unauthorized'); }
+  function logout(silent) {
+    if (token) { rpc('kj_logout', { p_token: token }).catch(function () {}); }
+    token = null; store.del('kj_token'); store.del('kj_company');
+    if (!silent) toast('ログアウトしました');
+    location.hash = '#/';
+    route();
+  }
+  function onError(e, fallback) {
+    if (isExpired(e)) {
+      token = null; store.del('kj_token'); store.del('kj_company');
+      location.hash = '#/';
+      route();
+      toast('ログインの有効期限が切れました。もう一度ログインしてください', true);
+      return;
+    }
+    toast(fallback || '通信に失敗しました。電波の良い場所でもう一度お試しください', true);
+  }
+
+  // ---- ヘッダー ----
+  function header() {
+    return '<div class="top"><div class="brand">施工管理<small>株式会社メディコム</small></div>' +
+      (token ? '<div class="who">' + esc(companyName) + '<br><button class="btn ghost small" id="logout" type="button">ログアウト</button></div>' : '') +
+      '</div>';
+  }
+  function bindHeader() {
+    var b = document.getElementById('logout');
+    if (b) b.addEventListener('click', function () { if (!busy) logout(); });
+  }
+
+  // ---- ログイン ----
+  function viewLogin(msg) {
+    app.innerHTML = header() +
+      '<div class="card">' +
+      '<h1>ログイン</h1><p class="sub">メディコムからお知らせしたIDとパスワードを入力してください。</p>' +
+      (msg ? '<div class="notice bad" role="alert">' + esc(msg) + '</div>' : '') +
+      '<form id="f" autocomplete="on" novalidate>' +
+      '<label class="field"><span>ID</span><input id="lid" name="username" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required></label>' +
+      '<label class="field"><span>パスワード</span><input id="pw" name="password" type="password" autocomplete="current-password" required></label>' +
+      '<button class="btn primary block" id="go" type="submit">ログイン</button>' +
+      '</form></div>';
+    var f = document.getElementById('f');
+    f.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var id = document.getElementById('lid').value.trim();
+      var pw = document.getElementById('pw').value;
+      if (!id || !pw) { viewLogin('IDとパスワードを入力してください'); return; }
+      var go = document.getElementById('go'); go.disabled = true; go.textContent = '確認中…';
+      rpc('kj_login', { p_login_id: id, p_password: pw }).then(function (r) {
+        if (r && r.ok) {
+          token = r.token; companyName = r.company_name || '';
+          store.set('kj_token', token); store.set('kj_company', companyName);
+          location.hash = '#/'; route();
+        } else if (r && r.error === 'locked') {
+          viewLogin('入力の誤りが続いたため、一時的に使えません。15分ほどしてからもう一度お試しください。');
+        } else {
+          viewLogin('IDまたはパスワードが違います');
+        }
+      }).catch(function () { viewLogin('通信に失敗しました。電波の良い場所でもう一度お試しください'); });
+    });
+    var first = document.getElementById('lid'); if (first) first.focus();
+  }
+
+  // ---- 現場一覧 ----
+  function statusChip(s) {
+    var cls = s === '完了' ? 'ok' : (s === '施工中' ? 'accent' : '');
+    return '<span class="chip ' + cls + '">' + esc(s || '') + '</span>';
+  }
+  function viewList() {
+    app.innerHTML = header() + '<h1>担当の現場</h1><p class="sub">現場を選んで、写真を送ってください。</p><p><span class="spinner" aria-hidden="true"></span> 読み込み中…</p>';
+    bindHeader();
+    rpc('kj_my_projects', { p_token: token }).then(function (list) {
+      var html = header() + '<h1>担当の現場</h1><p class="sub">現場を選んで、写真を送ってください。</p>';
+      if (!list || !list.length) {
+        html += '<div class="card"><p>担当の現場はまだありません。<br>メディコムからの連絡をお待ちください。</p></div>';
+      } else {
+        list.forEach(function (p) {
+          var pct = p.required ? Math.round(100 * p.done / p.required) : 0;
+          html += '<a class="card proj" href="#/p/' + esc(p.id) + '">' +
+            '<div class="row between"><div class="name">' + esc(p.name) + '</div>' + statusChip(p.status) + '</div>' +
+            '<div class="addr">' + esc(p.address || '') + '</div>' +
+            '<div class="bar' + (p.done >= p.required ? ' done' : '') + '" role="progressbar" aria-valuemin="0" aria-valuemax="' + p.required + '" aria-valuenow="' + p.done + '" aria-label="写真の進み具合"><i style="width:' + pct + '%"></i></div>' +
+            '<div class="meta"><span>写真 ' + p.done + ' / ' + p.required + ' 項目</span><span>' + (p.end_date ? '完工予定 ' + fmtDate(p.end_date) : '') + '</span></div>' +
+            '</a>';
+        });
+      }
+      app.innerHTML = html; bindHeader();
+    }).catch(function (e) { onError(e); if (token) { app.innerHTML = header() + '<div class="notice bad">読み込めませんでした。</div><button class="btn block" id="retry" type="button">もう一度読み込む</button>'; bindHeader(); document.getElementById('retry').addEventListener('click', viewList); } });
+  }
+
+  // ---- 現場詳細 ----
+  var currentDetail = null;
+  function viewDetail(id) {
+    app.innerHTML = header() + '<p><span class="spinner" aria-hidden="true"></span> 読み込み中…</p>';
+    bindHeader();
+    return rpc('kj_project_detail', { p_token: token, p_project_id: id }).then(function (d) {
+      currentDetail = d; renderDetail(d); loadThumbs(d);
+    }).catch(function (e) {
+      if (isExpired(e)) { onError(e); return; }
+      app.innerHTML = header() + '<div class="notice bad">この現場は表示できません。</div><a class="btn block" href="#/">現場一覧へ戻る</a>';
+      bindHeader();
+    });
+  }
+  function renderDetail(d) {
+    var reqs = d.requirements || [];
+    var done = reqs.filter(function (r) { return r.photos && r.photos.length; }).length;
+    var html = header() +
+      '<p><a href="#/" class="btn ghost small">← 現場一覧</a></p>' +
+      '<h1>' + esc(d.name) + '</h1><p class="sub">' + esc(d.address || '') + '</p>' +
+      '<div class="card stack"><div class="row between"><b>撮影の進み具合</b><span class="chip ' + (done === reqs.length ? 'ok' : 'accent') + '">' + done + ' / ' + reqs.length + ' 項目</span></div>' +
+      '<div class="bar' + (done === reqs.length ? ' done' : '') + '"><i style="width:' + (reqs.length ? Math.round(100 * done / reqs.length) : 0) + '%"></i></div>' +
+      (done === reqs.length ? '<div class="notice ok" style="margin:0">すべての写真がそろいました。ありがとうございます。</div>' : '<div class="small muted">撮り忘れがないよう、順番に撮影してください。</div>') +
+      '</div><div style="margin-top:14px">';
+    reqs.forEach(function (r) {
+      var n = (r.photos || []).length;
+      html += '<section class="req' + (n ? ' done' : '') + '" data-req="' + esc(r.id) + '">' +
+        '<div class="head"><span class="mark" aria-hidden="true">' + (n ? '✓' : esc(r.sort)) + '</span>' +
+        '<span class="label">' + esc(r.label) + '</span>' +
+        '<span class="chip ' + (n ? 'ok' : '') + '">' + (n ? n + '枚' : '未撮影') + '</span></div>' +
+        (n ? '<div class="thumbs">' + r.photos.map(function (p) { return '<button type="button" data-path="' + esc(p.path) + '" aria-label="' + esc(r.label) + 'の写真を大きく見る"></button>'; }).join('') + '</div>' : '') +
+        '<div class="shoot"><label class="btn ' + (n ? '' : 'primary') + ' block" data-pick="' + esc(r.id) + '">📷 ' + (n ? '写真を追加する' : '撮影・選択する') +
+        '<input type="file" accept="image/*" multiple data-file="' + esc(r.id) + '"></label></div>' +
+        '</section>';
+    });
+    html += '</div>';
+    app.innerHTML = html; bindHeader();
+
+    Array.prototype.forEach.call(app.querySelectorAll('input[data-file]'), function (inp) {
+      inp.addEventListener('change', function () {
+        var files = Array.prototype.slice.call(inp.files || []);
+        inp.value = '';
+        if (files.length) sendFiles(d.id, Number(inp.getAttribute('data-file')), files);
+      });
+    });
+  }
+  var urlCache = {};
+  function loadThumbs(d) {
+    var paths = [];
+    (d.requirements || []).forEach(function (r) { (r.photos || []).forEach(function (p) { paths.push(p.path); }); });
+    if (!paths.length) return;
+    fetch(API + '/functions/v1/kouji-api?action=url', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'apikey': KEY },
+      body: JSON.stringify({ token: token, paths: paths })
+    }).then(function (r) { return r.json(); }).then(function (res) {
+      var urls = (res && res.urls) || {};
+      Object.keys(urls).forEach(function (k) { urlCache[k] = urls[k]; });
+      Array.prototype.forEach.call(app.querySelectorAll('.thumbs button[data-path]'), function (b) {
+        var u = urlCache[b.getAttribute('data-path')];
+        if (!u) return;
+        var img = new Image(); img.alt = ''; img.loading = 'lazy'; img.src = u;
+        b.appendChild(img);
+        b.addEventListener('click', function () { openLightbox(u); });
+      });
+    }).catch(function () { /* サムネイルが出なくても撮影・送信はできる */ });
+  }
+  function openLightbox(url) {
+    var box = document.createElement('div');
+    box.className = 'lightbox'; box.setAttribute('role', 'dialog'); box.setAttribute('aria-label', '写真');
+    box.innerHTML = '<button class="btn small close" type="button">閉じる</button><img alt="">';
+    box.querySelector('img').src = url;
+    function close() { box.remove(); document.removeEventListener('keydown', onKey); }
+    function onKey(e) { if (e.key === 'Escape') close(); }
+    box.addEventListener('click', close);
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(box);
+    box.querySelector('.close').focus();
+  }
+
+  // ---- 写真の縮小(長辺1600px・JPEG)と送信 ----
+  function decode(file) {
+    if (window.createImageBitmap) {
+      return createImageBitmap(file, { imageOrientation: 'from-image' }).catch(function () { return viaImg(file); });
+    }
+    return viaImg(file);
+  }
+  function viaImg(file) {
+    return new Promise(function (res, rej) {
+      var u = URL.createObjectURL(file), i = new Image();
+      i.onload = function () { URL.revokeObjectURL(u); res(i); };
+      i.onerror = function () { URL.revokeObjectURL(u); rej(new Error('decode')); };
+      i.src = u;
+    });
+  }
+  function toJpeg(file) {
+    return decode(file).then(function (bmp) {
+      var w = bmp.width || bmp.naturalWidth, h = bmp.height || bmp.naturalHeight;
+      var sc = Math.min(1, 1600 / Math.max(w, h));
+      var c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(w * sc)); c.height = Math.max(1, Math.round(h * sc));
+      c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+      if (bmp.close) bmp.close();
+      return new Promise(function (res, rej) {
+        c.toBlob(function (b) { b ? res(b) : rej(new Error('encode')); }, 'image/jpeg', 0.82);
+      });
+    });
+  }
+  function upload(projectId, reqId, blob) {
+    var fd = new FormData();
+    fd.append('token', token); fd.append('project_id', projectId);
+    fd.append('requirement_id', String(reqId)); fd.append('file', blob, 'photo.jpg');
+    return fetch(API + '/functions/v1/kouji-api?action=upload', { method: 'POST', body: fd, headers: { 'apikey': KEY } })
+      .then(function (r) {
+        return r.json().catch(function () { return null; }).then(function (d) {
+          if (!r.ok || !d || !d.ok) { var e = new Error((d && d.error) || 'upload'); e.status = r.status; throw e; }
+          return d;
+        });
+      });
+  }
+  function setBusy(on, label) {
+    busy = on;
+    Array.prototype.forEach.call(app.querySelectorAll('label[data-pick]'), function (l) {
+      l.style.opacity = on ? '.55' : ''; l.style.pointerEvents = on ? 'none' : '';
+    });
+    var el = document.getElementById('sending');
+    if (on) {
+      if (!el) { el = document.createElement('div'); el.id = 'sending'; el.className = 'notice warn'; el.setAttribute('role', 'status'); app.insertBefore(el, app.children[1] || null); }
+      el.innerHTML = '<span class="spinner" aria-hidden="true"></span> ' + esc(label || '送信中…') + ' <b>画面を閉じずにお待ちください</b>';
+    } else if (el) { el.remove(); }
+  }
+  function sendFiles(projectId, reqId, files) {
+    if (busy) return;
+    var ok = 0, fail = 0, expired = false, i = 0;
+    setBusy(true, '送信中 (1/' + files.length + ')');
+    function next() {
+      if (i >= files.length || expired) return Promise.resolve();
+      var idx = i++;
+      setBusy(true, '送信中 (' + (idx + 1) + '/' + files.length + ')');
+      return toJpeg(files[idx]).then(function (b) { return upload(projectId, reqId, b); })
+        .then(function () { ok++; })
+        .catch(function (e) {
+          fail++;
+          if (e && (e.message === 'unauthorized' || e.status === 401)) expired = true;
+        })
+        .then(next);
+    }
+    next().then(function () {
+      setBusy(false);
+      if (expired) { onError({ code: '28000' }); return; }
+      if (ok) toast(ok + '枚を送信しました' + (fail ? '(' + fail + '枚は失敗)' : ''));
+      else toast('送信できませんでした。電波の良い場所でもう一度お試しください', true);
+      viewDetail(projectId);
+    });
+  }
+
+  // ---- ルーティング ----
+  function route() {
+    if (!token) { viewLogin(); return; }
+    var m = /^#\/p\/([0-9a-f-]{36})$/i.exec(location.hash);
+    if (m) viewDetail(m[1]); else viewList();
+  }
+  window.addEventListener('hashchange', function () { if (!busy) route(); });
+  window.addEventListener('beforeunload', function (e) { if (busy) { e.preventDefault(); e.returnValue = ''; } });
+  route();
+})();
+</script>
+</body>
+</html>
