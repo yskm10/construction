@@ -8,12 +8,12 @@
 最終更新: 2026-09-30
 
 **運用ルール**: 毎回更新する必要はない。見た目の微調整では不要。計算ロジック・権限・DBの持ち方・既知の不具合など「仕様」が変わった時だけ更新する。
-このリポジトリは複数のチャットから編集されることがあるため、作業を始める前にGitHubの最新版(`https://raw.githubusercontent.com/yskm10/mitsumori/main/<ファイル名>`)を必ず確認し、差分があればそれを土台にしてから編集すること。git が使える場合は `git fetch` で最新を取り込んでから上げる。
+このリポジトリは複数のチャットから編集されることがあるため、作業を始める前にGitHubの最新版(`https://raw.githubusercontent.com/yskm10/construction/main/mitsumori/<ファイル名>`)を必ず確認し、差分があればそれを土台にしてから編集すること。git が使える場合は `git fetch` で最新を取り込んでから上げる。
 
 ## 全体構成
 - 株式会社メディコム(工事系)向けの自社製見積システム。当面は蓄電池(ENELEAGE Zero)の設置工事の見積が中心。足場工事など他の工事にも使える。
-- 公開URL: https://yskm10.github.io/mitsumori/ (GitHub Pages / main ブランチ / ルート)
-- リポジトリ: yskm10/mitsumori (Public)
+- 公開URL: https://sekou.medicom.co.jp/mitsumori/ (GitHub Pages / construction リポジトリの mitsumori/ フォルダ)。2026-11-10に旧リポジトリ yskm10/mitsumori から統合。旧URL yskm10.github.io/mitsumori/ とはブラウザの保存領域が別なので、初回は再ログインが必要
+- リポジトリ: yskm10/construction (統合先。旧 yskm10/mitsumori は統合元)
 - 利用者: 当面は店主(森)のみ。将来は社員にも使わせる可能性あり。PC中心、現場では急ぎでスマホからも使う。
 - フロント: `index.html` の1ファイルのみ(素のJavaScript、ビルド不要)。supabase-js v2 をCDNから読み込む。
 

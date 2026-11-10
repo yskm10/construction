@@ -1,15 +1,15 @@
 # PROJECT_NOTES — ENELEAGE Zero 営業パートナー管理(eneleage-zero-agents)
 
 このファイルは、新しいチャットでClaudeに作業を頼むときに最初に渡す「引き継ぎ資料」です。
-最新版の確認先: `https://raw.githubusercontent.com/yskm10/eneleage-zero-agents/main/PROJECT_NOTES.md`。作業前に必ず最新を確認し、差分があればそれを土台にしてから編集すること。
+最新版の確認先: `https://raw.githubusercontent.com/yskm10/construction/main/agents/PROJECT_NOTES.md`。作業前に必ず最新を確認し、差分があればそれを土台にしてから編集すること。
 
 ## Claudeへのお願い
 
 このリポジトリは、非エンジニアの担当者(森)がClaudeに依頼しながら運用している静的サイトです。変更を依頼された際は、専門用語を避けて具体的に説明し、大きな変更は小さいステップに分けて進めてください。可能であれば変更前にコミットしておき、うまくいかなければ無理に直そうとせず元に戻して再度試してください。
 
-## このリポジトリの役割
+## この `agents/` フォルダの役割
 
-ENELEAGE Zero(太陽光パネル不要のスマート蓄電池、メーカー:株式会社ボルタ)の営業パートナー(業務委託)の募集・管理システム。GitHub Pagesで静的ホスティングし、Supabaseをバックエンドに使っている。カスタムドメイン `agent.medicom.co.jp` で公開(DNSはバリュードメイン/コアサーバーで管理、CNAMEレコードで設定済み)。
+ENELEAGE Zero(太陽光パネル不要のスマート蓄電池、メーカー:株式会社ボルタ)の営業パートナー(業務委託)の募集・管理システム。GitHub Pagesで静的ホスティングし、Supabaseをバックエンドに使っている。2026-11-10に旧リポジトリ eneleage-zero-agents から `construction` リポジトリの `agents/` フォルダへ統合した。公開URLは `https://sekou.medicom.co.jp/agents/`(応募フォーム)と `https://sekou.medicom.co.jp/agents/agent-admin.html`(管理画面)。旧ドメイン agent.medicom.co.jp は使わない(応募フォームは未配布だったためリンク切れの影響なし)。
 
 ## ファイル構成
 
