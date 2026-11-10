@@ -28,14 +28,15 @@ ENELEAGE Zero(太陽光パネル不要のスマート蓄電池、メーカー:�
 
 ## Supabase
 
-- プロジェクト名:`eneleage-zero-agents`(project ref: `escdzmgtgqssbqhqlubw`、リージョン: ap-northeast-1東京)
+- **2026-11-10 に移転**: 旧Supabaseプロジェクト `eneleage-zero-agents`(ref: `escdzmgtgqssbqhqlubw`)は、ゴルフ用プロジェクトを作る際に削除されたため、施工管理・見積と同じ `pos-system`(ref: `hxrycxlcsetpjfbwqybv`)の `public` に作り直した。旧データは復元不可(応募フォーム未配布のため実データなし)。
 - テーブル:
   - `public.sales_agents`:応募者情報。主なカラムは `entity_type`, `company_name`, `name`, `address`, `phone`, `line_id`, `email`, `staff_mobile`, `sales_area`, `invoice_registered`, `invoice_number`, `bank_name`, `bank_branch`, `bank_account_type`, `bank_account_number`, `bank_account_holder`, `id_document_path_front`, `id_document_path_back`, `main_products`(配列), `status`, `note`
   - `public.deals`:成約記録。`agent_id`, `agent_name_snapshot`, `price`, `invoice_registered_at_sale`, `commission`, `status`, `deal_date`, `note`
 - Storageバケット:`id-documents`(非公開)
-- RLSの注意点(ここを崩すと応募フォームか管理画面のどちらかが壊れる):
-  - `sales_agents`と`storage.objects`は `anon`(応募フォーム用)と `authenticated`(管理画面用)の両方にinsert/selectポリシーが必要
-  - `storage.buckets` 自体にも `anon`/`authenticated` 向けのselectポリシーが要る(バケットの存在確認ができないとアップロードが失敗する)
+- RLS(新・pos-system側):
+  - `sales_agents`: `anon`/`authenticated` はinsertのみ可(`status='pending'` かつ `reviewed_at is null` の行だけ)。閲覧・更新・削除は `is_owner()`(店主)のみ。`deals` は `is_owner()` のみ全操作可
+  - Storage `id-documents`(非公開): `applications/` 配下へのアップロードは誰でも可、閲覧・削除は `is_owner()` のみ
+  - 管理画面(`agent-admin.html`)は施工管理・見積と同じ店主アカウントでログインする(同じドメインなのでログインは共有される)
   - `index.html` 側のSupabaseクライアントは `persistSession: false, autoRefreshToken: false, detectSessionInUrl: false` にしている。これを外すと、同じブラウザで管理画面にログイン済みの状態で応募フォームを開いたときに `authenticated` ロールとして送信されてしまい、ポリシー次第で失敗する
 
 ## 歩合計算の仕様(2026年9月時点)
