@@ -86,6 +86,8 @@
     'quantity invalid': '台数は1〜20の整数で入力してください',
     'too many files': '添付は' + MAX_FILES + '件までです',
     'file not found': '添付ファイルを確認できませんでした。もう一度添付してください',
+    'power plan required': '現在ご利用中の電力プラン名を入力してください',
+    'bill file required': '電気料金明細を1件以上添付してください',
     'locked': 'この案件は修正できません'
   };
   function onError(e, fallback) {
@@ -197,7 +199,7 @@
       '</div>' +
       '<label class="field"><span>設置場所の住所' + FIELD_LABEL['*'] + '</span><input id="address" type="text" maxlength="200" value="' + val('address') + '" required></label>' +
       '<label class="field"><span>お客様の電話番号</span><input id="client_phone" type="text" inputmode="tel" maxlength="30" value="' + val('client_phone') + '"></label>' +
-      '<label class="field"><span>お客様のメールアドレス</span><input id="client_email" type="email" maxlength="100" value="' + val('client_email') + '"></label>' +
+      '<label class="field"><span>お客様のメールアドレス' + FIELD_LABEL['*'] + '</span><input id="client_email" type="email" maxlength="100" value="' + val('client_email') + '" required></label>' +
       '<h2 style="margin:22px 0 4px">販売内容</h2>' +
       '<div class="row">' +
       '<label class="field" style="flex:1"><span>台数' + FIELD_LABEL['*'] + '</span><input id="quantity" type="number" inputmode="numeric" min="1" max="20" value="' + (v.quantity == null ? 1 : esc(v.quantity)) + '"' + dis + ' required></label>' +
@@ -209,15 +211,15 @@
       '<label class="field"><span>施工の希望時期</span><input id="desired_period" type="text" maxlength="100" placeholder="例: 12月中、決算前までに" value="' + val('desired_period') + '"></label>' +
       '<h2 style="margin:22px 0 4px">現在の電気のご利用状況</h2>' +
       '<label class="field"><span>現在ご利用中の電力会社名' + FIELD_LABEL['*'] + '</span><input id="power_company" type="text" maxlength="100" placeholder="例: 関西電力" value="' + val('power_company') + '" required></label>' +
-      '<label class="field"><span>現在ご利用中の電力プラン名</span><input id="power_plan" type="text" maxlength="100" placeholder="例: 従量電灯B" value="' + val('power_plan') + '"></label>' +
+      '<label class="field"><span>現在ご利用中の電力プラン名' + FIELD_LABEL['*'] + '</span><input id="power_plan" type="text" maxlength="100" placeholder="例: 従量電灯B" value="' + val('power_plan') + '" required></label>' +
       '<div class="row">' +
       '<label class="field" style="flex:1"><span>直近1カ月の電気使用量(kWh)' + FIELD_LABEL['*'] + '</span><input id="usage_kwh" type="number" inputmode="decimal" step="any" min="0" value="' + val('usage_kwh') + '" required></label>' +
       '<label class="field" style="flex:1"><span>直近1カ月の電気料金(円)' + FIELD_LABEL['*'] + '</span><input id="bill_amount" type="number" inputmode="numeric" step="any" min="0" value="' + val('bill_amount') + '" required></label>' +
       '</div>' +
-      '<div class="field"><span>お客様の電気料金明細(最新のもの)</span>' +
+      '<div class="field"><span>お客様の電気料金明細(最新のもの)' + FIELD_LABEL['*'] + '</span>' +
       '<div id="files-existing"></div>' +
       '<input id="bill_files" type="file" accept="image/*,application/pdf" multiple>' +
-      '<p class="muted small">写真(JPEG・PNGなど)かPDFを、合計' + MAX_FILES + '件まで添付できます。後から追加することもできます。</p></div>' +
+      '<p class="muted small">写真(JPEG・PNGなど)かPDFを、合計' + MAX_FILES + '件まで添付できます。1件以上の添付が必要です。</p></div>' +
       '<label class="field"><span>メモ(お客様の要望、設置場所の状況など)</span><textarea id="note" rows="3" maxlength="1000">' + val('note') + '</textarea></label>' +
       '<button class="btn primary block" id="go" type="submit">' + esc(opt.submitLabel) + '</button>' +
       '</form>';
@@ -260,10 +262,13 @@
       if (!isFinite(o.quantity) || o.quantity < 1 || o.quantity > 20 || Math.floor(o.quantity) !== o.quantity) return { error: '台数は1〜20の整数で入力してください' };
       if (!isFinite(o.unit_price_man) || o.unit_price_man <= 0 || o.unit_price_man >= 2000) return { error: '販売価格を万円単位の数字で入力してください(例: 200)' };
     }
+    if (!o.client_email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(o.client_email)) return { error: 'お客様のメールアドレスを正しく入力してください' };
     if (!o.power_company) return { error: '現在ご利用中の電力会社名を入力してください' };
+    if (!o.power_plan) return { error: '現在ご利用中の電力プラン名を入力してください' };
     if (o.usage_kwh === null || !isFinite(o.usage_kwh) || o.usage_kwh < 0) return { error: '直近1カ月の電気使用量を数字で入力してください' };
     if (o.bill_amount === null || !isFinite(o.bill_amount) || o.bill_amount < 0) return { error: '直近1カ月の電気料金を数字で入力してください' };
     var files = document.getElementById('bill_files').files;
+    if (state.paths.length + files.length < 1) return { error: '電気料金明細(写真かPDF)を1件以上添付してください' };
     if (state.paths.length + files.length > MAX_FILES) return { error: '添付は合計' + MAX_FILES + '件までです' };
     return { data: o, files: Array.prototype.slice.call(files) };
   }
