@@ -18,6 +18,7 @@
   'use strict';
   var API = CONFIG.SUPABASE_URL, KEY = CONFIG.SUPABASE_KEY;
   var app = document.getElementById('app');
+  var MAX_FILES = 3;
 
   var store = {
     get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
@@ -38,12 +39,16 @@
     t.textContent = msg;
     t.className = 'toast show' + (bad ? ' bad' : '');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { t.className = 'toast'; }, 3500);
+    toastTimer = setTimeout(function () { t.className = 'toast'; }, 4000);
   }
   function fmtDateTime(iso) {
     var d = new Date(iso);
     if (isNaN(d)) return '';
     return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+  }
+  function todayStr() {
+    var t = new Date();
+    return t.getFullYear() + '-' + ('0' + (t.getMonth() + 1)).slice(-2) + '-' + ('0' + t.getDate()).slice(-2);
   }
 
   function rpc(fn, args) {
@@ -70,6 +75,19 @@
     toast('ログアウトしました');
     viewLogin();
   }
+  var ERR_TEXT = {
+    'kana invalid': 'フリガナは、ひらがなかカタカナで入力してください',
+    'postal invalid': '郵便番号は7桁の数字で入力してください',
+    'email invalid': 'メールアドレスの形式をご確認ください',
+    'power company required': '現在ご利用中の電力会社名を入力してください',
+    'usage invalid': '直近1カ月の電気使用量を数字で入力してください',
+    'bill invalid': '直近1カ月の電気料金を数字で入力してください',
+    'price invalid': '販売価格を万円単位の数字で入力してください',
+    'quantity invalid': '台数は1〜20の整数で入力してください',
+    'too many files': '添付は' + MAX_FILES + '件までです',
+    'file not found': '添付ファイルを確認できませんでした。もう一度添付してください',
+    'locked': 'この案件は修正できません'
+  };
   function onError(e, fallback) {
     if (isExpired(e)) {
       clearSession();
@@ -77,6 +95,7 @@
       return;
     }
     if (e && e.code === '54000') { toast('本日の登録件数の上限に達しました。明日またお試しください', true); return; }
+    if (e && ERR_TEXT[e.message]) { toast(ERR_TEXT[e.message], true); return; }
     toast(fallback || '通信に失敗しました。電波の良い場所でもう一度お試しください', true);
   }
 
@@ -122,55 +141,177 @@
     var first = document.getElementById('lid'); if (first) first.focus();
   }
 
-  // ---- 案件登録 + 送信済み ----
+  // ---- ファイル(電気料金明細) ----
+  function uuid() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    return String(Date.now()) + Math.random().toString(16).slice(2);
+  }
+  // 画像は長辺1800pxのJPEGに縮小して送る(スマホの大きな写真対策)。PDFはそのまま。
+  function prepareFile(file) {
+    return new Promise(function (resolve, reject) {
+      if (file.type === 'application/pdf') {
+        if (file.size > 10 * 1024 * 1024) { reject(new Error('big')); return; }
+        resolve({ blob: file, ext: 'pdf', type: 'application/pdf' }); return;
+      }
+      if (!/^image\//.test(file.type)) { reject(new Error('type')); return; }
+      var url = URL.createObjectURL(file), img = new Image();
+      img.onload = function () {
+        var max = 1800, w = img.naturalWidth, h = img.naturalHeight, k = Math.min(1, max / Math.max(w, h));
+        var c = document.createElement('canvas'); c.width = Math.round(w * k); c.height = Math.round(h * k);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url);
+        c.toBlob(function (b) { b ? resolve({ blob: b, ext: 'jpg', type: 'image/jpeg' }) : reject(new Error('type')); }, 'image/jpeg', 0.85);
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('type')); };
+      img.src = url;
+    });
+  }
+  function uploadFile(file) {
+    return prepareFile(file).then(function (p) {
+      var path = 'bills/' + uuid() + '.' + p.ext;
+      return fetch(API + '/storage/v1/object/agent-bills/' + path, {
+        method: 'POST',
+        headers: { 'apikey': KEY, 'Authorization': 'Bearer ' + KEY, 'Content-Type': p.type, 'x-upsert': 'false' },
+        body: p.blob
+      }).then(function (r) {
+        if (!r.ok) throw new Error('upload');
+        return path;
+      });
+    });
+  }
+
+  // ---- 入力フォーム(新規登録・修正で共通) ----
+  var FIELD_LABEL = {
+    '*': ' <b>*</b>'
+  };
+  function formHtml(v, opt) {
+    v = v || {};
+    var lockPrice = !!opt.lockPrice;
+    var dis = lockPrice ? ' disabled' : '';
+    function val(k) { return esc(v[k] == null ? '' : v[k]); }
+    return '<form id="f" novalidate>' +
+      '<label class="field"><span>お客様名(会社名または氏名)' + FIELD_LABEL['*'] + '</span><input id="client_name" type="text" maxlength="100" value="' + val('client_name') + '" required></label>' +
+      '<label class="field"><span>お客様名(フリガナ)' + FIELD_LABEL['*'] + '</span><input id="client_kana" type="text" maxlength="100" placeholder="例: カブシキガイシャ メディコム" value="' + val('client_kana') + '" required></label>' +
+      '<div class="row">' +
+      '<label class="field" style="flex:1"><span>郵便番号' + FIELD_LABEL['*'] + '</span><input id="postal_code" type="text" inputmode="numeric" maxlength="8" placeholder="531-0072" value="' + val('postal_code') + '" required></label>' +
+      '</div>' +
+      '<label class="field"><span>設置場所の住所' + FIELD_LABEL['*'] + '</span><input id="address" type="text" maxlength="200" value="' + val('address') + '" required></label>' +
+      '<label class="field"><span>お客様の電話番号</span><input id="client_phone" type="text" inputmode="tel" maxlength="30" value="' + val('client_phone') + '"></label>' +
+      '<label class="field"><span>お客様のメールアドレス</span><input id="client_email" type="email" maxlength="100" value="' + val('client_email') + '"></label>' +
+      '<h2 style="margin:22px 0 4px">販売内容</h2>' +
+      '<div class="row">' +
+      '<label class="field" style="flex:1"><span>台数' + FIELD_LABEL['*'] + '</span><input id="quantity" type="number" inputmode="numeric" min="1" max="20" value="' + (v.quantity == null ? 1 : esc(v.quantity)) + '"' + dis + ' required></label>' +
+      '<label class="field" style="flex:2"><span>1台あたりの販売価格(万円)' + FIELD_LABEL['*'] + '</span><input id="unit_price" type="number" inputmode="decimal" step="0.1" min="1" placeholder="例: 200" value="' + val('unit_price_man') + '"' + dis + ' required></label>' +
+      '</div>' +
+      '<p class="muted small">販売価格は「本体のみ・税別」で、1台あたりの金額を万円で入力してください(例: 200万円なら 200)。施工費は含めません。' +
+      (lockPrice ? '<br><b>確認済みの案件のため、台数・価格・契約日は変更できません。変更が必要な場合はメディコムにご連絡ください。</b>' : '') + '</p>' +
+      '<label class="field"><span>契約日</span><input id="contract_date" type="date" value="' + esc(v.contract_date || todayStr()) + '"' + dis + '></label>' +
+      '<label class="field"><span>施工の希望時期</span><input id="desired_period" type="text" maxlength="100" placeholder="例: 12月中、決算前までに" value="' + val('desired_period') + '"></label>' +
+      '<h2 style="margin:22px 0 4px">現在の電気のご利用状況</h2>' +
+      '<label class="field"><span>現在ご利用中の電力会社名' + FIELD_LABEL['*'] + '</span><input id="power_company" type="text" maxlength="100" placeholder="例: 関西電力" value="' + val('power_company') + '" required></label>' +
+      '<label class="field"><span>現在ご利用中の電力プラン名</span><input id="power_plan" type="text" maxlength="100" placeholder="例: 従量電灯B" value="' + val('power_plan') + '"></label>' +
+      '<div class="row">' +
+      '<label class="field" style="flex:1"><span>直近1カ月の電気使用量(kWh)' + FIELD_LABEL['*'] + '</span><input id="usage_kwh" type="number" inputmode="decimal" step="any" min="0" value="' + val('usage_kwh') + '" required></label>' +
+      '<label class="field" style="flex:1"><span>直近1カ月の電気料金(円)' + FIELD_LABEL['*'] + '</span><input id="bill_amount" type="number" inputmode="numeric" step="any" min="0" value="' + val('bill_amount') + '" required></label>' +
+      '</div>' +
+      '<div class="field"><span>お客様の電気料金明細(最新のもの)</span>' +
+      '<div id="files-existing"></div>' +
+      '<input id="bill_files" type="file" accept="image/*,application/pdf" multiple>' +
+      '<p class="muted small">写真(JPEG・PNGなど)かPDFを、合計' + MAX_FILES + '件まで添付できます。後から追加することもできます。</p></div>' +
+      '<label class="field"><span>メモ(お客様の要望、設置場所の状況など)</span><textarea id="note" rows="3" maxlength="1000">' + val('note') + '</textarea></label>' +
+      '<button class="btn primary block" id="go" type="submit">' + esc(opt.submitLabel) + '</button>' +
+      '</form>';
+  }
+
+  // 添付済みファイルの表示(×で外せる)
+  function bindFiles(state) {
+    var box = document.getElementById('files-existing'), input = document.getElementById('bill_files');
+    function draw() {
+      box.innerHTML = state.paths.map(function (p, i) {
+        return '<div class="row between" style="margin-bottom:6px"><span class="chip ok">添付済み ' + (i + 1) + (/\.pdf$/.test(p) ? '(PDF)' : '(写真)') + '</span>' +
+          '<button type="button" class="btn small ghost" data-rm="' + i + '">外す</button></div>';
+      }).join('');
+      Array.prototype.forEach.call(box.querySelectorAll('[data-rm]'), function (b) {
+        b.addEventListener('click', function () { state.paths.splice(Number(b.getAttribute('data-rm')), 1); draw(); });
+      });
+    }
+    draw();
+    input.addEventListener('change', function () {
+      if (state.paths.length + input.files.length > MAX_FILES) {
+        toast('添付は合計' + MAX_FILES + '件までです。不要なものを「外す」か、選び直してください', true); input.value = '';
+      }
+    });
+  }
+
+  function collect(state, opt) {
+    function val(id) { var el = document.getElementById(id); return el ? el.value.normalize('NFKC').trim() : ''; }
+    var o = {
+      client_name: val('client_name'), client_kana: val('client_kana'), postal_code: val('postal_code'), address: val('address'),
+      client_phone: val('client_phone'), client_email: val('client_email'),
+      quantity: Number(val('quantity')), unit_price_man: Number(val('unit_price')), contract_date: val('contract_date'),
+      desired_period: val('desired_period'), power_company: val('power_company'), power_plan: val('power_plan'),
+      usage_kwh: val('usage_kwh') === '' ? null : Number(val('usage_kwh')), bill_amount: val('bill_amount') === '' ? null : Number(val('bill_amount')),
+      note: document.getElementById('note').value.trim()
+    };
+    if (!o.client_name || !o.address) return { error: 'お客様名と住所を入力してください' };
+    if (!o.client_kana) return { error: 'お客様名のフリガナを入力してください' };
+    if (o.postal_code.replace(/[^0-9]/g, '').length !== 7) return { error: '郵便番号は7桁の数字で入力してください' };
+    if (!opt.lockPrice) {
+      if (!isFinite(o.quantity) || o.quantity < 1 || o.quantity > 20 || Math.floor(o.quantity) !== o.quantity) return { error: '台数は1〜20の整数で入力してください' };
+      if (!isFinite(o.unit_price_man) || o.unit_price_man <= 0 || o.unit_price_man >= 2000) return { error: '販売価格を万円単位の数字で入力してください(例: 200)' };
+    }
+    if (!o.power_company) return { error: '現在ご利用中の電力会社名を入力してください' };
+    if (o.usage_kwh === null || !isFinite(o.usage_kwh) || o.usage_kwh < 0) return { error: '直近1カ月の電気使用量を数字で入力してください' };
+    if (o.bill_amount === null || !isFinite(o.bill_amount) || o.bill_amount < 0) return { error: '直近1カ月の電気料金を数字で入力してください' };
+    var files = document.getElementById('bill_files').files;
+    if (state.paths.length + files.length > MAX_FILES) return { error: '添付は合計' + MAX_FILES + '件までです' };
+    return { data: o, files: Array.prototype.slice.call(files) };
+  }
+
+  // 送信(新規登録でも修正でも共通): 新しい添付を先に送ってから、登録・修正を呼ぶ
+  function send(state, opt, c, call, done) {
+    var go = document.getElementById('go'); go.disabled = true; go.textContent = '送信中…';
+    var reset = function () { go.disabled = false; go.textContent = opt.submitLabel; };
+    var ups = c.files.map(function (f) { return uploadFile(f); });
+    Promise.all(ups).then(function (newPaths) {
+      var payload = c.data; payload.bill_paths = state.paths.concat(newPaths);
+      return call(payload);
+    }).then(done).catch(function (e) {
+      reset();
+      if (e && (e.message === 'type' || e.message === 'big')) { toast('添付できるのは、10MBまでの写真(JPEG・PNG)かPDFです', true); return; }
+      if (e && e.message === 'upload') { toast('添付ファイルを送れませんでした。電波の良い場所でもう一度お試しください', true); return; }
+      onError(e, '送信できませんでした。入力内容をご確認ください');
+    });
+  }
+
+  // ---- トップ(新規登録 + 登録済み一覧) ----
   function statusChip(s) {
     var cls = s === '確定' ? 'ok' : (s === '却下' ? 'bad' : 'accent');
     var label = s === '未確認' ? '確認待ち' : s;
     return '<span class="chip ' + cls + '">' + esc(label) + '</span>';
   }
   function viewMain(okMsg) {
+    var opt = { submitLabel: 'この内容で登録する', lockPrice: false };
+    var state = { paths: [] };
     app.innerHTML = header() +
       '<h1>案件を登録する</h1>' +
-      '<p class="sub">お客様と契約が決まった案件を登録してください。メディコムが内容を確認し、工事の手配に進みます。</p>' +
+      '<p class="sub">お客様と契約が決まった案件を登録してください。メディコムが内容を確認し、工事の手配に進みます。登録後も、下の一覧から内容を見たり、修正したりできます。</p>' +
       (okMsg ? '<div class="notice ok" role="status">' + esc(okMsg) + '</div>' : '') +
-      '<div class="card"><form id="f" novalidate>' +
-      '<label class="field"><span>お客様名(会社名または氏名) <b>*</b></span><input id="client_name" type="text" maxlength="100" required></label>' +
-      '<label class="field"><span>お客様の電話番号</span><input id="client_phone" type="text" inputmode="tel" maxlength="30"></label>' +
-      '<label class="field"><span>設置場所の住所 <b>*</b></span><input id="address" type="text" maxlength="200" required></label>' +
-      '<div class="row">' +
-      '<label class="field" style="flex:1"><span>台数 <b>*</b></span><input id="quantity" type="number" inputmode="numeric" min="1" max="20" value="1" required></label>' +
-      '<label class="field" style="flex:2"><span>1台あたりの販売価格(万円) <b>*</b></span><input id="unit_price" type="number" inputmode="decimal" step="0.1" min="1" placeholder="例: 200" required></label>' +
-      '</div>' +
-      '<p class="muted small">販売価格は「本体のみ・税別」で、1台あたりの金額を万円で入力してください(例: 200万円なら 200)。施工費は含めません。</p>' +
-      '<label class="field"><span>契約日</span><input id="contract_date" type="date"></label>' +
-      '<label class="field"><span>施工の希望時期</span><input id="desired_period" type="text" maxlength="100" placeholder="例: 12月中、決算前までに"></label>' +
-      '<label class="field"><span>メモ(お客様の要望、設置場所の状況など)</span><textarea id="note" rows="3" maxlength="1000"></textarea></label>' +
-      '<button class="btn primary block" id="go" type="submit">この内容で登録する</button>' +
-      '</form></div>' +
+      '<div class="card">' + formHtml({}, opt) + '</div>' +
       '<h2 style="margin-top:28px">登録済みの案件</h2>' +
       '<div id="list"><p class="muted"><span class="spinner" aria-hidden="true"></span> 読み込み中…</p></div>';
-    bindHeader();
-    var today = new Date();
-    document.getElementById('contract_date').value = today.getFullYear() + '-' + ('0' + (today.getMonth() + 1)).slice(-2) + '-' + ('0' + today.getDate()).slice(-2);
-
+    bindHeader(); bindFiles(state);
     document.getElementById('f').addEventListener('submit', function (ev) {
       ev.preventDefault();
-      function val(id) { return document.getElementById(id).value.normalize('NFKC').trim(); }
-      var name = val('client_name'), addr = val('address');
-      var qty = Number(val('quantity')), price = Number(val('unit_price'));
-      if (!name || !addr) { toast('お客様名と住所を入力してください', true); return; }
-      if (!isFinite(qty) || qty < 1 || qty > 20 || Math.floor(qty) !== qty) { toast('台数は1〜20の整数で入力してください', true); return; }
-      if (!isFinite(price) || price <= 0 || price >= 2000) { toast('販売価格を万円単位の数字で入力してください(例: 200)', true); return; }
-      if (price < 200 && !confirm('1台あたり200万円を下回っています。値引きには事前の承認が必要です。承認を受けていますか?')) { return; }
-      if (!confirm('「' + name + '」様 ' + qty + '台 / 1台' + price + '万円(税別) で登録します。よろしいですか?')) { return; }
-      var go = document.getElementById('go'); go.disabled = true; go.textContent = '送信中…';
-      rpc('kj_agent_submit', { p_token: token, p: {
-        client_name: name, client_phone: val('client_phone'), address: addr, quantity: qty, unit_price_man: price,
-        contract_date: val('contract_date'), desired_period: val('desired_period'), note: document.getElementById('note').value.trim()
-      } }).then(function () {
+      var c = collect(state, opt);
+      if (c.error) { toast(c.error, true); return; }
+      var d = c.data;
+      if (d.unit_price_man < 200 && !confirm('1台あたり200万円を下回っています。値引きには事前の承認が必要です。承認を受けていますか?')) { return; }
+      if (!confirm('「' + d.client_name + '」様 ' + d.quantity + '台 / 1台' + d.unit_price_man + '万円(税別) で登録します。よろしいですか?')) { return; }
+      send(state, opt, c, function (payload) { return rpc('kj_agent_submit', { p_token: token, p: payload }); }, function () {
         viewMain('登録しました。メディコムが内容を確認します。');
         window.scrollTo(0, 0);
-      }).catch(function (e) { go.disabled = false; go.textContent = 'この内容で登録する'; onError(e, '登録できませんでした。入力内容をご確認ください'); });
+      });
     });
     loadList();
   }
@@ -179,10 +320,58 @@
       var el = document.getElementById('list'); if (!el) return;
       if (!list || !list.length) { el.innerHTML = '<p class="muted">まだ登録した案件はありません。</p>'; return; }
       el.innerHTML = list.map(function (s) {
-        return '<div class="proj"><div class="row between"><div class="name">' + esc(s.client_name) + '様</div>' + statusChip(s.status) + '</div>' +
-          '<div class="meta">' + s.quantity + '台 ・ ' + esc(fmtDateTime(s.created_at)) + ' 登録</div></div>';
+        return '<button type="button" class="proj" data-id="' + esc(s.id) + '" style="display:block;width:100%;text-align:left;cursor:pointer;font:inherit;color:inherit;background:#fff;border:1px solid #e5e0d0;border-radius:12px;padding:12px 14px;margin-bottom:10px">' +
+          '<div class="row between"><div class="name">' + esc(s.client_name) + '様</div>' + statusChip(s.status) + '</div>' +
+          '<div class="meta">' + s.quantity + '台 ・ ' + esc(fmtDateTime(s.created_at)) + ' 登録' + (s.updated_at ? ' ・ ' + esc(fmtDateTime(s.updated_at)) + ' 修正' : '') + '</div>' +
+          '<div class="small" style="color:#b8480f;margin-top:4px">タップして詳細を見る・修正する ›</div></button>';
       }).join('');
+      Array.prototype.forEach.call(el.querySelectorAll('button[data-id]'), function (b) {
+        b.addEventListener('click', function () { viewDetail(b.getAttribute('data-id')); });
+      });
     }).catch(function (e) { onError(e); });
+  }
+
+  // ---- 詳細・修正 ----
+  function viewDetail(id) {
+    app.innerHTML = header() + '<p><span class="spinner" aria-hidden="true"></span> 読み込み中…</p>';
+    bindHeader();
+    rpc('kj_agent_my_submission', { p_token: token, p_id: id }).then(function (s) {
+      var rejected = s.status === '却下', confirmed = s.status === '確定';
+      var opt = { submitLabel: '修正を保存する', lockPrice: confirmed };
+      var state = { paths: (s.bill_paths || []).slice() };
+      var info = rejected
+        ? '<div class="notice bad">この案件は却下されました。修正はできません。内容についてはメディコムにご確認ください。</div>'
+        : (confirmed ? '<div class="notice ok">メディコムが確認済みの案件です。お客様情報や電気のご利用状況は修正できます(台数・価格・契約日は変更できません)。</div>'
+          : '<div class="notice warn">メディコムの確認待ちです。確認が終わるまでは、すべての項目を修正できます。</div>');
+      app.innerHTML = header() +
+        '<p><button type="button" class="btn ghost small" id="back">‹ 一覧にもどる</button></p>' +
+        '<div class="row between"><h1 style="margin:0">' + esc(s.client_name) + '様</h1>' + statusChip(s.status) + '</div>' +
+        '<p class="sub">' + esc(fmtDateTime(s.created_at)) + ' 登録' + (s.updated_at ? ' ・ ' + esc(fmtDateTime(s.updated_at)) + ' 修正' : '') + '</p>' +
+        info +
+        (rejected ? readonlyHtml(s) : '<div class="card">' + formHtml(s, opt) + '</div>');
+      bindHeader();
+      document.getElementById('back').addEventListener('click', function () { viewMain(); });
+      if (rejected) return;
+      bindFiles(state);
+      document.getElementById('f').addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        var c = collect(state, opt);
+        if (c.error) { toast(c.error, true); return; }
+        send(state, opt, c, function (payload) {
+          if (confirmed) { delete payload.quantity; delete payload.unit_price_man; delete payload.contract_date; payload.quantity = s.quantity; payload.unit_price_man = s.unit_price_man; payload.contract_date = s.contract_date; }
+          return rpc('kj_agent_update_submission', { p_token: token, p_id: id, p: payload });
+        }, function () { toast('修正を保存しました'); viewDetail(id); window.scrollTo(0, 0); });
+      });
+    }).catch(function (e) { onError(e, '読み込めませんでした'); });
+  }
+  function readonlyHtml(s) {
+    function row(k, v) { return '<dt>' + k + '</dt><dd>' + esc(v == null || v === '' ? '—' : v) + '</dd>'; }
+    return '<div class="card"><dl class="dl">' +
+      row('お客様名', s.client_name) + row('フリガナ', s.client_kana) + row('郵便番号', s.postal_code) + row('住所', s.address) +
+      row('電話番号', s.client_phone) + row('メール', s.client_email) + row('台数', s.quantity) + row('1台の販売価格', s.unit_price_man + '万円(税別)') +
+      row('契約日', s.contract_date) + row('施工希望', s.desired_period) + row('電力会社', s.power_company) + row('電力プラン', s.power_plan) +
+      row('直近1カ月の使用量', s.usage_kwh == null ? '' : s.usage_kwh + ' kWh') + row('直近1カ月の料金', s.bill_amount == null ? '' : Number(s.bill_amount).toLocaleString('ja-JP') + ' 円') +
+      row('電気料金明細', (s.bill_paths || []).length ? (s.bill_paths.length + '件 添付済み') : '') + row('メモ', s.note) + '</dl></div>';
   }
 
   if (token) { viewMain(); } else { viewLogin(); }

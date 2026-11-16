@@ -63,3 +63,11 @@ GitHub Pagesで公開(ビルドステップなし、HTMLファイルを直接配
 - 歩合は「台数 × 1台あたりの歩合」で計算(`public.kj_calc_commission`、式は agent-admin.html の calcCommission と同じ。**式を変えるときは両方直す**)。`deals.price` には合計(1台価格×台数)を入れる。
 - DB(pos-system): `kouji.agent_logins` / `kouji.agent_sessions` / `kouji.agent_submissions`(APIに公開されないスキーマ)。関数は `kj_agent_login` `kj_agent_logout` `kj_agent_submit` `kj_agent_my_submissions`(営業マン用)と `kj_admin_agent_logins` `kj_admin_agent_issue_login` `kj_admin_agent_set_active` `kj_admin_submissions` `kj_admin_confirm_submission` `kj_admin_reject_submission`(店主用、`is_owner()`で確認)。ログインは請負会社(`kj_login`)と同じ方式(5回間違えると15分ロック、14日で期限切れ、無効化で即時ログアウト)。
 - 営業マン1人につき1日30件まで登録できる(連続送信の防止)。
+
+## 案件登録の項目追加・詳細表示・修正(2026-11-16)
+- 追加項目: お客様名フリガナ・郵便番号・メール・電力会社・電力プラン・直近1カ月の使用量(kWh)/料金(円)・電気料金明細(最大3件)。
+  必須=フリガナ・郵便番号・電力会社・使用量・料金。任意=メール・プラン・明細。
+- 営業マンは portal.html の一覧から詳細表示・修正が可能(RPC: kj_agent_my_submission / kj_agent_update_submission)。
+  確定後は台数・単価・契約日は変更不可(歩合に影響するため)。却下後は修正不可。
+- 明細はStorageバケット `agent-bills`(非公開・10MB・jpg/png/webp/pdf)。アップロードは anon で `bills/` 配下のみ、閲覧は店主のみ(admin.html が署名付きURLで表示)。
+- admin.html「営業登録」タブに新項目・明細リンク・「修正あり」表示。
