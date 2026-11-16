@@ -360,6 +360,13 @@
 
   // ===================== 応募者・営業マン =====================
   let agentsCache = [];
+  let loginsCache = {};
+  const PORTAL_URL = 'https://sekou.medicom.co.jp/agents/portal.html';
+  function genPassword() {
+    const chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const buf = new Uint32Array(12); crypto.getRandomValues(buf);
+    return Array.from(buf, n => chars[n % chars.length]).join('');
+  }
   const agentListEl = document.getElementById('agent-list');
   const dealAgentSelect = document.getElementById('deal-agent-select');
 
@@ -367,6 +374,12 @@
     const { data, error } = await sb.from('sales_agents').select('*').order('created_at', { ascending: false });
     if (error) { console.error(error); return; }
     agentsCache = data || [];
+    try {
+      const { data: lg, error: lgErr } = await sb.rpc('kj_admin_agent_logins');
+      if (lgErr) throw lgErr;
+      loginsCache = {};
+      (lg || []).forEach(l => { loginsCache[l.agent_id] = l; });
+    } catch (err) { console.error(err); }
     renderAgents();
     renderDealAgentOptions();
   }
@@ -415,12 +428,15 @@
             <div class="item-meta">${statusBadge}${invBadge}${escapeHtml(a.phone || '')}</div>
             <div class="item-meta">${escapeHtml(a.sales_area || '')}${products ? ' ・ ' + escapeHtml(products) : ''}</div>
             <div class="item-meta">案件${stats.count}件・歩合合計${fmt(stats.total)}万円</div>
+            ${loginsCache[a.id] ? `<div class="item-meta">案件登録用ID：${escapeHtml(loginsCache[a.id].login_id)}（${loginsCache[a.id].active ? '有効' : '無効'}）</div>` : ''}
             ${staffMobileLine}
             <button type="button" class="icon-btn link" data-action="toggle-detail" data-id="${a.id}">詳細を見る</button>
             <div class="agent-detail" data-detail-id="${a.id}" hidden>${detailHtml}${docLinks ? `<div class="item-meta">${docLinks}</div>` : ''}</div>
           </div>
           <div class="row-actions">
             <select class="status-select" data-action="update-agent-status" data-id="${a.id}">${statusOptions}</select>
+            ${a.status === 'active' ? `<button type="button" class="icon-btn link" data-action="issue-login" data-id="${a.id}">${loginsCache[a.id] ? 'パスワード再発行' : 'ログイン発行'}</button>` : ''}
+            ${loginsCache[a.id] ? `<button type="button" class="icon-btn link" data-action="toggle-login" data-id="${a.id}">${loginsCache[a.id].active ? 'ログイン無効化' : 'ログイン有効化'}</button>` : ''}
             <button type="button" class="icon-btn danger" data-action="delete-agent" data-id="${a.id}">削除</button>
           </div>
         </div>`;
@@ -457,6 +473,30 @@
       const { data, error } = await sb.storage.from('id-documents').createSignedUrl(path, 60);
       if (error) { alert('画像を取得できませんでした'); return; }
       window.open(data.signedUrl, '_blank');
+      return;
+    }
+    const issueBtn = e.target.closest('button[data-action="issue-login"]');
+    if (issueBtn) {
+      const agent = agentsCache.find(a => a.id === issueBtn.dataset.id);
+      if (!agent) return;
+      const existing = loginsCache[agent.id];
+      const loginId = (prompt('案件登録用のログインID(英数字3文字以上)', existing ? existing.login_id : (agent.email || '').split('@')[0]) || '').trim();
+      if (!loginId) return;
+      const pw = genPassword();
+      const { error } = await sb.rpc('kj_admin_agent_issue_login', { p_agent: agent.id, p_login_id: loginId, p_password: pw });
+      if (error) { alert(error.message && error.message.includes('duplicate') ? 'このIDはすでに使われています。別のIDにしてください。' : '発行できませんでした：' + (error.message || '')); return; }
+      prompt('営業マンに次の内容を伝えてください(全部コピーできます)。パスワードはこの画面でしか見られません。', `案件登録ページ ${PORTAL_URL} / ID: ${loginId.toLowerCase()} / パスワード: ${pw}`);
+      await loadAgents();
+      return;
+    }
+    const toggleLoginBtn = e.target.closest('button[data-action="toggle-login"]');
+    if (toggleLoginBtn) {
+      const lg = loginsCache[toggleLoginBtn.dataset.id];
+      if (!lg) return;
+      if (lg.active && !confirm('このログインを無効にします(ログイン中の端末も使えなくなります)。よろしいですか?')) return;
+      const { error } = await sb.rpc('kj_admin_agent_set_active', { p_agent: toggleLoginBtn.dataset.id, p_active: !lg.active });
+      if (error) { alert('変更できませんでした'); return; }
+      await loadAgents();
       return;
     }
     const delBtn = e.target.closest('button[data-action="delete-agent"]');

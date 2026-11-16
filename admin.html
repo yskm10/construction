@@ -23,7 +23,7 @@
   var dlg = document.getElementById('dlg');
   var STATUSES = ['施工前', '完工', '請求中', '完了'];
   function statusCls(s) { return s === '完了' ? 'ok' : (s === '完工' ? 'accent' : (s === '請求中' ? 'warn' : '')); }
-  var state = { projects: [], companies: [], tab: 'projects', filter: '' };
+  var state = { projects: [], companies: [], submissions: [], tab: 'projects', filter: '' };
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -109,10 +109,10 @@
 
   // ---- 読み込み ----
   function loadAll() {
-    return Promise.all([sb.rpc('kj_admin_projects'), sb.rpc('kj_admin_companies')]).then(function (rs) {
-      var bad = rs[0].error || rs[1].error;
+    return Promise.all([sb.rpc('kj_admin_projects'), sb.rpc('kj_admin_companies'), sb.rpc('kj_admin_submissions')]).then(function (rs) {
+      var bad = rs[0].error || rs[1].error || rs[2].error;
       if (bad) { var e = new Error(bad.message); e.code = bad.code; throw e; }
-      state.projects = rs[0].data || []; state.companies = rs[1].data || [];
+      state.projects = rs[0].data || []; state.companies = rs[1].data || []; state.submissions = rs[2].data || [];
     });
   }
   function boot() {
@@ -137,13 +137,80 @@
       '<div class="who"><button class="btn ghost small" id="out" type="button">ログアウト</button></div></div>' +
       '<div class="tabs" role="tablist">' +
       '<button class="tab" role="tab" id="t-projects" aria-selected="' + (state.tab === 'projects') + '" data-tab="projects">案件</button>' +
+      '<button class="tab" role="tab" id="t-submissions" aria-selected="' + (state.tab === 'submissions') + '" data-tab="submissions">営業登録' + (pendingCount() ? '(' + pendingCount() + ')' : '') + '</button>' +
       '<button class="tab" role="tab" id="t-companies" aria-selected="' + (state.tab === 'companies') + '" data-tab="companies">請負会社のアカウント</button></div>' +
       '<div id="body"></div>';
     document.getElementById('out').addEventListener('click', function () { sb.auth.signOut().then(function () { viewLogin(); }); });
     Array.prototype.forEach.call(app.querySelectorAll('.tab'), function (t) {
       t.addEventListener('click', function () { state.tab = t.getAttribute('data-tab'); render(); });
     });
-    if (state.tab === 'projects') renderProjects(); else renderCompanies();
+    if (state.tab === 'projects') renderProjects(); else if (state.tab === 'submissions') renderSubmissions(); else renderCompanies();
+  }
+
+  // ---- 営業マンが登録した案件(未確認 → 店主が確定) ----
+  function pendingCount() { return (state.submissions || []).filter(function (x) { return x.status === '未確認'; }).length; }
+  function manYen(v) { return Number(v).toLocaleString('ja-JP') + '万円'; }
+  function renderSubmissions() {
+    var list = state.submissions || [];
+    var html = '<p class="small muted">営業パートナーが「案件登録」ページから送った案件です。内容を確認して「確定」すると、案件タブに現場として追加され、営業マン管理の成約記録(歩合)も自動で作られます。</p>';
+    if (!list.length) html += '<div class="card"><p>営業マンからの登録はまだありません。</p></div>';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px">';
+    list.forEach(function (x) {
+      var chip = x.status === '確定' ? 'ok' : (x.status === '却下' ? 'bad' : 'warn');
+      html += '<article class="card" data-sid="' + esc(x.id) + '">' +
+        '<div class="row between"><b style="font-size:17px">' + esc(x.client_name) + '様</b><span class="chip ' + chip + '">' + esc(x.status) + '</span></div>' +
+        '<div class="small muted">' + esc(x.address) + (x.client_phone ? ' / ' + esc(x.client_phone) : '') + '</div>' +
+        '<dl class="dl"><dt>営業マン</dt><dd>' + esc(x.agent_label || x.agent_name || '(削除済み)') + '</dd>' +
+        '<dt>台数・単価</dt><dd>' + x.quantity + '台 × ' + manYen(x.unit_price_man) + '(本体・税別)</dd>' +
+        '<dt>契約日</dt><dd>' + dt(x.contract_date) + '</dd>' +
+        '<dt>施工希望</dt><dd>' + esc(x.desired_period || '—') + '</dd>' +
+        '<dt>登録日時</dt><dd>' + esc(new Date(x.created_at).toLocaleString('ja-JP')) + '</dd></dl>' +
+        (x.note ? '<div class="small" style="margin:6px 0 10px">メモ: ' + esc(x.note) + '</div>' : '') +
+        (x.unit_price_man < 200 && x.status === '未確認' ? '<div class="notice warn">1台あたり200万円を下回っています(値引きの承認を確認してください)</div>' : '') +
+        (x.status === '未確認' ? '<div class="row"><button class="btn small primary" data-act="confirm" type="button">確定する</button><button class="btn small ghost" data-act="reject" type="button">却下</button></div>' : '') +
+        '</article>';
+    });
+    html += '</div>';
+    document.getElementById('body').innerHTML = html;
+    Array.prototype.forEach.call(app.querySelectorAll('article[data-sid]'), function (a) {
+      var id = a.getAttribute('data-sid');
+      var c = a.querySelector('[data-act=confirm]'), r = a.querySelector('[data-act=reject]');
+      if (c) c.addEventListener('click', function () { confirmSubmission(id); });
+      if (r) r.addEventListener('click', function () {
+        if (!confirm('この登録を却下します。よろしいですか?')) return;
+        sb.rpc('kj_admin_reject_submission', { p_id: id }).then(function (res) {
+          if (res.error) { toast('却下できませんでした', true); return; }
+          toast('却下しました'); loadAll().then(render);
+        });
+      });
+    });
+  }
+  function confirmSubmission(id) {
+    var x = state.submissions.filter(function (y) { return y.id === id; })[0]; if (!x) return;
+    var companies = state.companies.filter(function (c) { return c.active; });
+    var comm = x.invoice_registered === null || x.invoice_registered === undefined ? null :
+      x.quantity * (function (p, reg) { var base = reg ? 40 : 37.5, rate = reg ? 0.6 : 0.58, d = p - 200; return d >= 0 ? base + d * rate : Math.max(0, base + d); })(Number(x.unit_price_man), x.invoice_registered);
+    openDialog('<form id="cf" class="dlg" novalidate><h2>案件を確定する</h2>' +
+      '<p class="small muted">' + esc(x.client_name) + '様 / ' + x.quantity + '台 × ' + manYen(x.unit_price_man) + ' / 営業: ' + esc(x.agent_label || x.agent_name || '') + '</p>' +
+      (comm !== null ? '<p class="small">営業マンへの歩合: <b>' + comm.toLocaleString('ja-JP') + '万円</b>(営業マン管理の成約記録に自動で追加されます)</p>' : '<p class="small muted">営業マンが削除済みのため、成約記録(歩合)は作られません。</p>') +
+      '<label class="field"><span>現場名</span><input type="text" name="name" value="' + esc(x.client_name + '様 蓄電池設置' + (x.quantity > 1 ? ' ×' + x.quantity + '台' : '')) + '"></label>' +
+      '<label class="field"><span>請負会社(後から案件タブで変更できます)</span><select name="company_id"><option value="">未設定</option>' +
+      companies.map(function (c) { return '<option value="' + esc(c.id) + '">' + esc(c.name) + '</option>'; }).join('') + '</select></label>' +
+      '<label class="field"><span>請負金額(見積・任意)</span><input type="text" inputmode="numeric" data-money autocomplete="off" name="contract_amount" value=""></label>' +
+      '<div class="actions"><button class="btn ghost" type="button" id="c">キャンセル</button><button class="btn primary" type="submit" id="s">確定する</button></div></form>');
+    document.getElementById('c').addEventListener('click', closeDialog);
+    document.getElementById('cf').addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var f = ev.target, g = function (n) { return f.elements[n].value.trim(); };
+      var amount = num(g('contract_amount'));
+      if (g('contract_amount') && amount === '') { toast('請負金額は数字で入力してください', true); return; }
+      var s = document.getElementById('s'); s.disabled = true; s.textContent = '処理中…';
+      sb.rpc('kj_admin_confirm_submission', { p_id: id, p: { name: g('name'), company_id: g('company_id'), contract_amount: amount } }).then(function (r) {
+        if (r.error) { s.disabled = false; s.textContent = '確定する'; toast('確定できませんでした', true); return; }
+        closeDialog(); toast('確定しました。案件タブに追加されました');
+        state.tab = 'projects'; loadAll().then(render);
+      });
+    });
   }
 
   // ---- 案件 ----
@@ -154,7 +221,7 @@
       sumC += Number(p.contract_amount || 0); sumB += Number(p.billing_amount || 0);
       if (p.billing_amount && !p.payment_in_date) waiting++;
     });
-    var html =
+    var html = (pendingCount() ? '<div class="notice warn" style="margin-bottom:12px">営業マンからの未確認の登録が ' + pendingCount() + '件あります。 <button class="btn small" id="gosub" type="button">確認する</button></div>' : '') +
       '<div class="kpis">' +
       '<div class="kpi"><span>案件数</span><b>' + state.projects.length + '件</b></div>' +
       '<div class="kpi"><span>請負金額 合計</span><b class="money">' + yen(sumC) + '</b></div>' +
@@ -184,6 +251,7 @@
     });
     html += '</div>';
     document.getElementById('body').innerHTML = html;
+    var gs = document.getElementById('gosub'); if (gs) gs.addEventListener('click', function () { state.tab = 'submissions'; render(); });
     document.getElementById('flt').addEventListener('change', function (e) { state.filter = e.target.value; renderProjects(); });
     document.getElementById('newp').addEventListener('click', function () { editProject(null); });
     Array.prototype.forEach.call(app.querySelectorAll('article[data-id]'), function (a) {

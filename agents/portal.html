@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#14213d">
+<title>営業パートナー 案件登録 | 株式会社メディコム</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<main id="app" class="wrap" aria-live="polite"></main>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script src="../config.js"></script>
+<script>
+(function () {
+  'use strict';
+  var API = CONFIG.SUPABASE_URL, KEY = CONFIG.SUPABASE_KEY;
+  var app = document.getElementById('app');
+
+  var store = {
+    get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+    del: function (k) { try { localStorage.removeItem(k); } catch (e) {} }
+  };
+  var token = store.get('ag_token');
+  var agentName = store.get('ag_name') || '';
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  var toastTimer;
+  function toast(msg, bad) {
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'toast show' + (bad ? ' bad' : '');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.className = 'toast'; }, 3500);
+  }
+  function fmtDateTime(iso) {
+    var d = new Date(iso);
+    if (isNaN(d)) return '';
+    return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+  }
+
+  function rpc(fn, args) {
+    return fetch(API + '/rest/v1/rpc/' + fn, {
+      method: 'POST', cache: 'no-store',
+      headers: { 'apikey': KEY, 'Authorization': 'Bearer ' + KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify(args)
+    }).then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (data) {
+        if (!r.ok) {
+          var e = new Error((data && data.message) || 'error');
+          e.code = data && data.code; e.status = r.status;
+          throw e;
+        }
+        return data;
+      });
+    });
+  }
+  function isExpired(e) { return e && (e.code === '28000' || e.message === 'unauthorized'); }
+  function clearSession() { token = null; store.del('ag_token'); store.del('ag_name'); }
+  function logout() {
+    if (token) { rpc('kj_agent_logout', { p_token: token }).catch(function () {}); }
+    clearSession();
+    toast('ログアウトしました');
+    viewLogin();
+  }
+  function onError(e, fallback) {
+    if (isExpired(e)) {
+      clearSession();
+      viewLogin('ログインの有効期限が切れました。もう一度ログインしてください。');
+      return;
+    }
+    if (e && e.code === '54000') { toast('本日の登録件数の上限に達しました。明日またお試しください', true); return; }
+    toast(fallback || '通信に失敗しました。電波の良い場所でもう一度お試しください', true);
+  }
+
+  function header() {
+    return '<div class="top"><div class="brand">案件登録<small>営業パートナー</small></div>' +
+      (token ? '<div class="who">' + esc(agentName) + '<br><button class="btn ghost small" id="logout" type="button">ログアウト</button></div>' : '') +
+      '</div>';
+  }
+  function bindHeader() {
+    var b = document.getElementById('logout');
+    if (b) b.addEventListener('click', logout);
+  }
+
+  // ---- ログイン ----
+  function viewLogin(msg) {
+    app.innerHTML = header() +
+      '<div class="card">' +
+      '<h1>ログイン</h1><p class="sub">メディコムからお知らせしたIDとパスワードを入力してください。</p>' +
+      (msg ? '<div class="notice bad" role="alert">' + esc(msg) + '</div>' : '') +
+      '<form id="f" autocomplete="on" novalidate>' +
+      '<label class="field"><span>ID</span><input id="lid" name="username" type="text" lang="en" inputmode="email" style="ime-mode:disabled" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required></label>' +
+      '<label class="field"><span>パスワード</span><input id="pw" name="password" type="password" autocomplete="current-password" required></label>' +
+      '<button class="btn primary block" id="go" type="submit">ログイン</button>' +
+      '</form></div>';
+    document.getElementById('f').addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var id = document.getElementById('lid').value.normalize('NFKC').replace(/\s/g, '');
+      var pw = document.getElementById('pw').value.normalize('NFKC');
+      if (!id || !pw) { viewLogin('IDとパスワードを入力してください'); return; }
+      var go = document.getElementById('go'); go.disabled = true; go.textContent = '確認中…';
+      rpc('kj_agent_login', { p_login_id: id, p_password: pw }).then(function (r) {
+        if (r && r.ok) {
+          token = r.token; agentName = r.name || '';
+          store.set('ag_token', token); store.set('ag_name', agentName);
+          viewMain();
+        } else if (r && r.error === 'locked') {
+          viewLogin('入力の誤りが続いたため、一時的に使えません。15分ほどしてからもう一度お試しください。');
+        } else {
+          viewLogin('IDまたはパスワードが違います');
+        }
+      }).catch(function () { viewLogin('通信に失敗しました。電波の良い場所でもう一度お試しください'); });
+    });
+    var first = document.getElementById('lid'); if (first) first.focus();
+  }
+
+  // ---- 案件登録 + 送信済み ----
+  function statusChip(s) {
+    var cls = s === '確定' ? 'ok' : (s === '却下' ? 'bad' : 'accent');
+    var label = s === '未確認' ? '確認待ち' : s;
+    return '<span class="chip ' + cls + '">' + esc(label) + '</span>';
+  }
+  function viewMain(okMsg) {
+    app.innerHTML = header() +
+      '<h1>案件を登録する</h1>' +
+      '<p class="sub">お客様と契約が決まった案件を登録してください。メディコムが内容を確認し、工事の手配に進みます。</p>' +
+      (okMsg ? '<div class="notice ok" role="status">' + esc(okMsg) + '</div>' : '') +
+      '<div class="card"><form id="f" novalidate>' +
+      '<label class="field"><span>お客様名(会社名または氏名) <b>*</b></span><input id="client_name" type="text" maxlength="100" required></label>' +
+      '<label class="field"><span>お客様の電話番号</span><input id="client_phone" type="text" inputmode="tel" maxlength="30"></label>' +
+      '<label class="field"><span>設置場所の住所 <b>*</b></span><input id="address" type="text" maxlength="200" required></label>' +
+      '<div class="row">' +
+      '<label class="field" style="flex:1"><span>台数 <b>*</b></span><input id="quantity" type="number" inputmode="numeric" min="1" max="20" value="1" required></label>' +
+      '<label class="field" style="flex:2"><span>1台あたりの販売価格(万円) <b>*</b></span><input id="unit_price" type="number" inputmode="decimal" step="0.1" min="1" placeholder="例: 200" required></label>' +
+      '</div>' +
+      '<p class="muted small">販売価格は「本体のみ・税別」で、1台あたりの金額を万円で入力してください(例: 200万円なら 200)。施工費は含めません。</p>' +
+      '<label class="field"><span>契約日</span><input id="contract_date" type="date"></label>' +
+      '<label class="field"><span>施工の希望時期</span><input id="desired_period" type="text" maxlength="100" placeholder="例: 12月中、決算前までに"></label>' +
+      '<label class="field"><span>メモ(お客様の要望、設置場所の状況など)</span><textarea id="note" rows="3" maxlength="1000"></textarea></label>' +
+      '<button class="btn primary block" id="go" type="submit">この内容で登録する</button>' +
+      '</form></div>' +
+      '<h2 style="margin-top:28px">登録済みの案件</h2>' +
+      '<div id="list"><p class="muted"><span class="spinner" aria-hidden="true"></span> 読み込み中…</p></div>';
+    bindHeader();
+    var today = new Date();
+    document.getElementById('contract_date').value = today.getFullYear() + '-' + ('0' + (today.getMonth() + 1)).slice(-2) + '-' + ('0' + today.getDate()).slice(-2);
+
+    document.getElementById('f').addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      function val(id) { return document.getElementById(id).value.normalize('NFKC').trim(); }
+      var name = val('client_name'), addr = val('address');
+      var qty = Number(val('quantity')), price = Number(val('unit_price'));
+      if (!name || !addr) { toast('お客様名と住所を入力してください', true); return; }
+      if (!isFinite(qty) || qty < 1 || qty > 20 || Math.floor(qty) !== qty) { toast('台数は1〜20の整数で入力してください', true); return; }
+      if (!isFinite(price) || price <= 0 || price >= 2000) { toast('販売価格を万円単位の数字で入力してください(例: 200)', true); return; }
+      if (price < 200 && !confirm('1台あたり200万円を下回っています。値引きには事前の承認が必要です。承認を受けていますか?')) { return; }
+      if (!confirm('「' + name + '」様 ' + qty + '台 / 1台' + price + '万円(税別) で登録します。よろしいですか?')) { return; }
+      var go = document.getElementById('go'); go.disabled = true; go.textContent = '送信中…';
+      rpc('kj_agent_submit', { p_token: token, p: {
+        client_name: name, client_phone: val('client_phone'), address: addr, quantity: qty, unit_price_man: price,
+        contract_date: val('contract_date'), desired_period: val('desired_period'), note: document.getElementById('note').value.trim()
+      } }).then(function () {
+        viewMain('登録しました。メディコムが内容を確認します。');
+        window.scrollTo(0, 0);
+      }).catch(function (e) { go.disabled = false; go.textContent = 'この内容で登録する'; onError(e, '登録できませんでした。入力内容をご確認ください'); });
+    });
+    loadList();
+  }
+  function loadList() {
+    rpc('kj_agent_my_submissions', { p_token: token }).then(function (list) {
+      var el = document.getElementById('list'); if (!el) return;
+      if (!list || !list.length) { el.innerHTML = '<p class="muted">まだ登録した案件はありません。</p>'; return; }
+      el.innerHTML = list.map(function (s) {
+        return '<div class="proj"><div class="row between"><div class="name">' + esc(s.client_name) + '様</div>' + statusChip(s.status) + '</div>' +
+          '<div class="meta">' + s.quantity + '台 ・ ' + esc(fmtDateTime(s.created_at)) + ' 登録</div></div>';
+      }).join('');
+    }).catch(function (e) { onError(e); });
+  }
+
+  if (token) { viewMain(); } else { viewLogin(); }
+})();
+</script>
+</body>
+</html>

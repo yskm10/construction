@@ -41,7 +41,7 @@
 
 | フォルダ | 内容 | 公開URL |
 |---|---|---|
-| `agents/` | ENELEAGE Zero 営業パートナーの応募フォームと管理画面(詳細は `agents/PROJECT_NOTES.md`) | `sekou.medicom.co.jp/agents/` |
+| `agents/` | ENELEAGE Zero 営業パートナーの応募フォーム・管理画面・案件登録ページ(詳細は `agents/PROJECT_NOTES.md`)。営業マンが登録した案件は、この管理画面の「営業登録」タブで確定すると案件に反映される | `sekou.medicom.co.jp/agents/`(案件登録は `/agents/portal.html`) |
 | `mitsumori/` | 自社製見積システム(詳細は `mitsumori/PROJECT_NOTES.md`) | `sekou.medicom.co.jp/mitsumori/` |
 
 施工管理(このファイルの上の説明)は、これまでどおりリポジトリ直下のファイルで動いています。

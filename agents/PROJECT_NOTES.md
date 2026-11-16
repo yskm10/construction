@@ -54,3 +54,12 @@ ENELEAGE Zero(太陽光パネル不要のスマート蓄電池、メーカー:�
 ## デプロイ方法
 
 GitHub Pagesで公開(ビルドステップなし、HTMLファイルを直接配置)。`index.html`と`agent-admin.html`を更新してpushすれば反映される。カスタムドメイン・HTTPS強制は設定済み。
+
+## 営業マンの案件登録(2026-11-16 追加)
+
+- 流れ: 店主が応募を承認(active) → 応募者タブの「ログイン発行」でID・パスワード(自動生成)を発行して営業マンに伝える → 営業マンが `https://sekou.medicom.co.jp/agents/portal.html` にログインして案件を登録 → 施工管理の管理画面(`sekou.medicom.co.jp/admin.html`)の「営業登録」タブに「未確認」で出る → 店主が「確定」すると、施工管理の案件(`kouji.projects`)と、営業マン管理の成約記録(`public.deals`、歩合つき)が自動で作られる。「却下」もできる。
+- 営業マンの画面で見せるのは、登録フォームと、自分が送った案件の一覧(お客様名・台数・状態のみ。金額・歩合は見せない)。
+- 営業マンが入力するのは、お客様名・電話・住所・台数・**1台あたりの販売価格(本体・税別・万円)**・契約日・施工希望時期・メモ。
+- 歩合は「台数 × 1台あたりの歩合」で計算(`public.kj_calc_commission`、式は agent-admin.html の calcCommission と同じ。**式を変えるときは両方直す**)。`deals.price` には合計(1台価格×台数)を入れる。
+- DB(pos-system): `kouji.agent_logins` / `kouji.agent_sessions` / `kouji.agent_submissions`(APIに公開されないスキーマ)。関数は `kj_agent_login` `kj_agent_logout` `kj_agent_submit` `kj_agent_my_submissions`(営業マン用)と `kj_admin_agent_logins` `kj_admin_agent_issue_login` `kj_admin_agent_set_active` `kj_admin_submissions` `kj_admin_confirm_submission` `kj_admin_reject_submission`(店主用、`is_owner()`で確認)。ログインは請負会社(`kj_login`)と同じ方式(5回間違えると15分ロック、14日で期限切れ、無効化で即時ログアウト)。
+- 営業マン1人につき1日30件まで登録できる(連続送信の防止)。
