@@ -373,7 +373,7 @@ function renderEdit(){
   <div class="internal">社内用(印刷されません) — 原価合計 <b id="t-cost"></b> ／ 粗利 <b id="t-profit"></b>(<span id="t-rate"></span>)</div></div>
  <div class="card"><h3>請求書</h3><div class="grid">${fld('invDate','請求日','date')}${fld('invDue','入金期限','date')}${fld('invWork','取引日(工事完了日など。空なら工期)')}</div>
   <div style="margin-top:10px"><label class="hint">請求書の備考(PDFに印字)</label><textarea data-f="invNote">${esc(e.invNote)}</textarea></div>
-  <p class="hint" style="margin:6px 0 0">請求日・入金期限は「PDF:請求書」を開いたときに自動で入ります(入金期限の決め方は設定画面)。振込先も設定画面で登録します。${db.settings.bank?'':'<b style="color:#b00">振込先が未登録です。</b>'}${db.settings.showInvoice&&db.settings.invoiceNo?'':'登録番号は印字されません。'}</p></div>
+  <p class="hint" style="margin:6px 0 0">請求日・入金期限は「PDF:請求書」を開いたときに自動で入ります(入金期限の決め方は設定画面)。振込先も設定画面で登録します。${db.settings.bank?'':'<b style="color:#b00">振込先が未登録です。</b>'}${db.settings.invoiceNo?'':'<b style="color:#b00">インボイス登録番号が未登録です(設定画面で登録すると請求書に印字されます)。</b>'}</p></div>
  <div class="card"><label class="hint">備考(PDFに印字)</label><textarea data-f="note">${esc(e.note)}</textarea></div>
  <div class="bar"><button data-a="pv-simple" class="pri">PDF:簡易版</button><button data-a="pv-detail" class="pri">PDF:詳細版</button><button data-a="pv-invoice" class="pri">PDF:請求書</button><button data-a="dup" data-id="${e.id}">複製</button><button data-a="savetpl">テンプレとして保存</button><span class="grow"></span><button class="dan" data-a="del" data-id="${e.id}">この見積を削除</button></div>
  <datalist id="units">${['式','m','㎡','個','箇所','台','人工','月','回','本','枚'].map(u=>`<option>${u}</option>`).join('')}</datalist>`;
@@ -418,7 +418,7 @@ function renderSettings(){
  $app.innerHTML=`<div class="bar"><button data-a="back">← 一覧</button><h2 style="margin:0">設定</h2></div>
  <div class="card"><h3>自社情報(見積書に印字)</h3><div class="grid">${f('company','会社名')}${f('zip','郵便番号(〒付き)')}${f('addr','住所')}${f('tel','TEL')}${f('rep','代表者')}
  ${f('invoiceNo','インボイス登録番号(T+13桁)')}
- <div><label>登録番号を印字</label><select data-c="showInvoice"><option value="0" ${!s.showInvoice?'selected':''}>しない</option><option value="1" ${s.showInvoice?'selected':''}>する</option></select></div>
+ <div><label>登録番号を見積書にも印字(請求書には常に印字)</label><select data-c="showInvoice"><option value="0" ${!s.showInvoice?'selected':''}>しない</option><option value="1" ${s.showInvoice?'selected':''}>する</option></select></div>
  ${f('validDays','有効期限(見積日から何日)','number')}${f('payment','支払条件の初期値')}
  <div><label>日付表記</label><select data-c="wareki"><option value="0" ${!s.wareki?'selected':''}>西暦</option><option value="1" ${s.wareki?'selected':''}>和暦</option></select></div>
  <div><label>消費税の端数処理(新規見積から適用)</label><select data-c="taxRound"><option value="floor" ${s.taxRound==='floor'?'selected':''}>切捨て</option><option value="ceil" ${s.taxRound==='ceil'?'selected':''}>切上げ</option><option value="round" ${s.taxRound==='round'?'selected':''}>四捨五入</option></select></div></div>
@@ -433,11 +433,11 @@ function renderSettings(){
 }
 
 /* ---------- 印刷 ---------- */
-function co(){const s=db.settings;return `<div class="co"><div class="cn">${esc(s.company)}</div><div>${esc(s.zip)}</div><div>${esc(s.addr)}</div><div>TEL ${esc(s.tel)}</div><div>${esc(s.rep)}</div>${s.showInvoice&&s.invoiceNo?`<div>登録番号 ${esc(s.invoiceNo)}</div>`:''}${s.stamp?`<img class="stamp" src="${s.stamp}">`:''}</div>`}
+function co(inv){const s=db.settings;return `<div class="co"><div class="cn">${esc(s.company)}</div><div>${esc(s.zip)}</div><div>${esc(s.addr)}</div><div>TEL ${esc(s.tel)}</div><div>${esc(s.rep)}</div>${(inv||s.showInvoice)&&s.invoiceNo?`<div>登録番号 ${esc(s.invoiceNo)}</div>`:''}${s.stamp?`<img class="stamp" src="${s.stamp}">`:''}</div>`}
 function head(e,c,extra,inv){
  const w=db.settings.wareki;
  return `<h1>${inv?'御 請 求 書':'御 見 積 書'}</h1><div class="top"><div class="tl"><span class="to">${esc(e.customer)||'　　　　　'} ${esc(e.honorific)}</span><p style="font-size:10pt;margin:2mm 0 0">${inv?'下記のとおりご請求申し上げます。':'下記のとおり御見積り申し上げます。'}</p>${extra||''}</div>
- <div><div class="dt">${inv?'請求番号 '+esc(e.no)+'<br>請求日 '+fd(e.invDate,w):'見積番号 '+esc(e.no)+'<br>見積日 '+fd(e.date,w)+(e.valid?'<br>有効期限 '+fd(e.valid,w):'')}</div><div style="margin-top:2mm">${co()}</div></div></div>`;
+ <div><div class="dt">${inv?'請求番号 '+esc(e.no)+'<br>請求日 '+fd(e.invDate,w):'見積番号 '+esc(e.no)+'<br>見積日 '+fd(e.date,w)+(e.valid?'<br>有効期限 '+fd(e.valid,w):'')}</div><div style="margin-top:2mm">${co(inv)}</div></div></div>`;
 }
 function metaHtml(e,pairs){const w=db.settings.wareki;const arr=pairs.filter(p=>p[1]);return arr.length?`<div class="meta">${arr.map(p=>`<div><span class="l">${p[0]}</span>：${esc(p[1])}</div>`).join('')}</div>`:''}
 function headline(e,c,inv){if(inv)return `<div class="amt">ご請求金額　${yen(c.total)}－<span style="font-size:10pt;font-weight:400">　(税込)</span></div>`;const v=e.taxMode==='incl'?c.total:c.net;return `<div class="amt">御見積金額　${yen(v)}－${e.taxMode==='excl'?'<span style="font-size:10pt;font-weight:400">　(消費税は別途)</span>':'<span style="font-size:10pt;font-weight:400">　(税込)</span>'}</div>`}
